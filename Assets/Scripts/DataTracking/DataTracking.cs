@@ -186,9 +186,21 @@ namespace DataTracking
 
         // 左手系 Quaternion → 右手系
         private Quaternion LHtoRH_Quaternion(Quaternion q)
+
         {
-            // 把 (x, y, z, w) → (-x, -y, z, w)
-            return new Quaternion(-q.x, -q.y, q.z, q.w);
+            // return new Quaternion(-q.x, -q.y, q.z, q.w);
+            return new Quaternion(q.x, q.y, -q.z, q.w);
+            // return new Quaternion(-q.x, q.y, q.z, q.w);
+
+            // 🔸 方案 4：取共轭（即反向旋转，通常不是坐标系转换，慎用）
+            // return new Quaternion(-q.x, -q.y, -q.z, q.w);
+
+            // 🔸 方案 5：与方案 1 相同（Z 轴镜像的标准推导结果）
+            // return new Quaternion(-q.x, -q.y, q.z, q.w); // 同方案 1
+
+            // 🔸 方案 6：不做任何转换（用于对比基线）
+            // return q;
+
         }
 
 
@@ -269,22 +281,22 @@ namespace DataTracking
             // Head
             data.head.position = new Vector3Data(LHtoRH_Vector3(GetHeadPosition()));
             data.head.rotation = new QuaternionData(LHtoRH_Quaternion(GetHeadRotation()));
-            data.head.linearVelocity = new Vector4Data(GetHeadVelocity());      // ✅ Vector4Data
-            data.head.angularVelocity = new Vector4Data(GetHeadAngularVelocity()); // ✅
+            data.head.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetHeadVelocity()));
+            data.head.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetHeadAngularVelocity()));
 
             // Left
             data.left.position = new Vector3Data(LHtoRH_Vector3(GetLeftPosition()));
             data.left.rotation = new QuaternionData(LHtoRH_Quaternion(GetLetfRotation()));
-            data.left.linearVelocity = new Vector4Data(GetLeftVelocity());       // ✅
-            data.left.angularVelocity = new Vector4Data(GetLeftAngularVelocity()); // ✅
+            data.left.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetLeftVelocity()));
+            data.left.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetLeftAngularVelocity()));
             // left.button 保持默认（全 false）
             // left.axes 已在构造函数中初始化为 [0,0,0,0]
 
             // Right
             data.right.position = new Vector3Data(LHtoRH_Vector3(GetRightPosition()));
             data.right.rotation = new QuaternionData(LHtoRH_Quaternion(GetRightRotation()));
-            data.right.linearVelocity = new Vector4Data(GetRightVelocity());     // ✅
-            data.right.angularVelocity = new Vector4Data(GetRightAngularVelocity()); // ✅
+            data.right.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetRightVelocity()));
+            data.right.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetRightAngularVelocity()));
 
             // 深拷贝按钮状态
             // Left buttons
