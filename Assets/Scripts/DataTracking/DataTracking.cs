@@ -73,6 +73,8 @@ namespace DataTracking
 
         // 透视功能状态
         private bool _isSeethroughEnabled = true;
+        private float _lastSendTime = -1f;  // 记录上次发送时间，初始值设为-1表示尚未发送过
+        private int _sendCounter = 0;      // 发送计数器
 
         private void Awake()
             {
@@ -276,6 +278,20 @@ namespace DataTracking
 
         private void SendVRDataToServer()
         {
+            // 计算发送频率相关信息
+            float currentTime = Time.time;
+            _sendCounter++;
+            
+            // 如果不是第一次发送，则计算与上次发送的时间间隔
+            if (_lastSendTime >= 0)
+            {
+                float timeSinceLastSend = currentTime - _lastSendTime;
+                // Debug.Log($"[HTTP发送频率] #{_sendCounter}: 间隔={timeSinceLastSend:F4}s, 频率={(1f/timeSinceLastSend):F1}Hz");
+            }
+            
+            // 更新上次发送时间
+            _lastSendTime = currentTime;
+            
             var data = new SendVRData();
 
             // Head
@@ -337,19 +353,13 @@ namespace DataTracking
             data.timestamp = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             string json = JsonUtility.ToJson(data, true);
-            // string leftJson = JsonUtility.ToJson(data.left, true);
-            // string rightJson = JsonUtility.ToJson(data.right, true);
-            string rightbutton = JsonUtility.ToJson(data.right, true);
-
-            // Debug.Log("VR数据0------1: "+  rightbutton);
             
             // 发送到服务器
-            StartCoroutine(PostDataToServer(json));
+            StartCoroutine(PostDataToServer(json, _sendCounter));
         }
 
-        private IEnumerator PostDataToServer(string jsonData)
+        private IEnumerator PostDataToServer(string jsonData, int sendNumber)
         {
-            
             // 从 UIController 获取基础地址并拼接完整 URL
             string url = serverUrl; // 默认值
             if (uiController != null)
@@ -357,8 +367,6 @@ namespace DataTracking
                 // url = "https://" + uiController.serverBaseUrl + "/poseData";
                 url = "https://localhost:5000/poseData"; // 测试固定地址
             }
-            
-            // Debug.Log("目标URL: " + url);
             
             // 检查URL是否有效
             if (string.IsNullOrEmpty(url))
@@ -478,7 +486,8 @@ namespace DataTracking
             CheckAndLogButtonChanges();
             
             // 每帧发送数据到服务器
-            SendVRDataToServer();
+                SendVRDataToServer();
+            
         }
 
         private void CheckAndLogButtonChanges()
@@ -606,7 +615,7 @@ namespace DataTracking
                     Debug.Log("✅ 按钮按下中 - VR 数据:\n" + json);
                 }
             }
-
+        
         /// <summary>
         /// 切换透视功能
         /// </summary>
