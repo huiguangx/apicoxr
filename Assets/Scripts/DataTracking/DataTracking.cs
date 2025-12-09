@@ -35,6 +35,12 @@ namespace DataTracking
         public InputActionReference rightTriggerRef; // 右手Trigger按键
         public InputActionReference right2DAxisRef;  // 右手2D摇杆轴
 
+        [Header("手腕旋转映射（可选）")]
+        [Tooltip("启用手腕旋转映射（解决手柄旋转轴和机器人手腕旋转轴不一致的问题）")]
+        public bool enableWristRotationMapping = false;
+        [Tooltip("拖入 WristRotationMapper 组件")]
+        public WristRotationMapper wristRotationMapper;
+
         // Head
         private Vector3 _headPosition = Vector3.zero;
         private Quaternion _headRotation = Quaternion.identity;
@@ -79,7 +85,7 @@ namespace DataTracking
         private void Awake()
             {
                 // 视频透视
-                PXR_Manager.EnableVideoSeeThrough = true;
+                // PXR_Manager.EnableVideoSeeThrough = true;
 
                 // // 配置主相机以支持视频透视（必须设置！）
                 // Camera mainCamera = Camera.main;
@@ -190,19 +196,7 @@ namespace DataTracking
         private Quaternion LHtoRH_Quaternion(Quaternion q)
 
         {
-            // return new Quaternion(-q.x, -q.y, q.z, q.w);
-            return new Quaternion(q.x, q.y, -q.z, q.w);
-            // return new Quaternion(-q.x, q.y, q.z, q.w);
-
-            // 🔸 方案 4：取共轭（即反向旋转，通常不是坐标系转换，慎用）
-            // return new Quaternion(-q.x, -q.y, -q.z, q.w);
-
-            // 🔸 方案 5：与方案 1 相同（Z 轴镜像的标准推导结果）
-            // return new Quaternion(-q.x, -q.y, q.z, q.w); // 同方案 1
-
-            // 🔸 方案 6：不做任何转换（用于对比基线）
-            // return q;
-
+            return new Quaternion(-q.x, -q.y, q.z, q.w);
         }
 
 
@@ -302,7 +296,15 @@ namespace DataTracking
 
             // Left
             data.left.position = new Vector3Data(LHtoRH_Vector3(GetLeftPosition()));
-            data.left.rotation = new QuaternionData(LHtoRH_Quaternion(GetLetfRotation()));
+
+            // 左手旋转：如果启用旋转映射，则应用映射
+            Quaternion leftRotation = GetLetfRotation();
+            if (enableWristRotationMapping && wristRotationMapper != null)
+            {
+                leftRotation = wristRotationMapper.MapControllerToWrist(leftRotation);
+            }
+            data.left.rotation = new QuaternionData(LHtoRH_Quaternion(leftRotation));
+
             data.left.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetLeftVelocity()));
             data.left.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetLeftAngularVelocity()));
             // left.button 保持默认（全 false）
@@ -310,7 +312,15 @@ namespace DataTracking
 
             // Right
             data.right.position = new Vector3Data(LHtoRH_Vector3(GetRightPosition()));
-            data.right.rotation = new QuaternionData(LHtoRH_Quaternion(GetRightRotation()));
+
+            // 右手旋转：如果启用旋转映射，则应用映射
+            Quaternion rightRotation = GetRightRotation();
+            if (enableWristRotationMapping && wristRotationMapper != null)
+            {
+                rightRotation = wristRotationMapper.MapControllerToWrist(rightRotation);
+            }
+            data.right.rotation = new QuaternionData(LHtoRH_Quaternion(rightRotation));
+
             data.right.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetRightVelocity()));
             data.right.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetRightAngularVelocity()));
 
