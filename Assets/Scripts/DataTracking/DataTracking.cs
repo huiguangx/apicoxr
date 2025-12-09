@@ -178,6 +178,20 @@ namespace DataTracking
                 actionRef.action.performed += ctx => callback(ctx.ReadValue<Vector2>());
         }
 
+        // 左手系 Vector3 → 右手系
+        private Vector3 LHtoRH_Vector3(Vector3 v)
+        {
+            return new Vector3(v.x, v.y, -v.z);
+        }
+
+        // 左手系 Quaternion → 右手系
+        private Quaternion LHtoRH_Quaternion(Quaternion q)
+        {
+            // 把 (x, y, z, w) → (-x, -y, z, w)
+            return new Quaternion(-q.x, -q.y, q.z, q.w);
+        }
+
+
         /// <summary>
         /// PCVR 模式震动支持
         /// </summary>
@@ -253,22 +267,22 @@ namespace DataTracking
             var data = new SendVRData();
 
             // Head
-            data.head.position = new Vector3Data(GetHeadPosition());
-            data.head.rotation = new QuaternionData(GetHeadRotation());
+            data.head.position = new Vector3Data(LHtoRH_Vector3(GetHeadPosition()));
+            data.head.rotation = new QuaternionData(LHtoRH_Quaternion(GetHeadRotation()));
             data.head.linearVelocity = new Vector4Data(GetHeadVelocity());      // ✅ Vector4Data
             data.head.angularVelocity = new Vector4Data(GetHeadAngularVelocity()); // ✅
 
             // Left
-            data.left.position = new Vector3Data(GetLeftPosition());
-            data.left.rotation = new QuaternionData(GetLetfRotation());
+            data.left.position = new Vector3Data(LHtoRH_Vector3(GetLeftPosition()));
+            data.left.rotation = new QuaternionData(LHtoRH_Quaternion(GetLetfRotation()));
             data.left.linearVelocity = new Vector4Data(GetLeftVelocity());       // ✅
             data.left.angularVelocity = new Vector4Data(GetLeftAngularVelocity()); // ✅
             // left.button 保持默认（全 false）
             // left.axes 已在构造函数中初始化为 [0,0,0,0]
 
             // Right
-            data.right.position = new Vector3Data(GetRightPosition());
-            data.right.rotation = new QuaternionData(GetRightRotation());
+            data.right.position = new Vector3Data(LHtoRH_Vector3(GetRightPosition()));
+            data.right.rotation = new QuaternionData(LHtoRH_Quaternion(GetRightRotation()));
             data.right.linearVelocity = new Vector4Data(GetRightVelocity());     // ✅
             data.right.angularVelocity = new Vector4Data(GetRightAngularVelocity()); // ✅
 
@@ -404,6 +418,31 @@ namespace DataTracking
             if (IsActionEnabled(rightAngularVelocityRef))
                 _rightAngularVelocity = rightAngularVelocityRef.action.ReadValue<Vector3>();
             
+            // 每帧更新Trigger和Grip的值
+            if (IsActionEnabled(leftTriggerRef)) {
+                float currentValue = leftTriggerRef.action.ReadValue<float>();
+                _leftButtons[0].value = currentValue;
+                _leftButtons[0].pressed = currentValue > 0.1f;
+
+            }
+            
+            if (IsActionEnabled(leftGripRef)) {
+                float currentValue = leftGripRef.action.ReadValue<float>();
+                _leftButtons[1].value = currentValue;
+                _leftButtons[1].pressed = currentValue > 0.1f;
+            }
+            if (IsActionEnabled(rightTriggerRef)) {
+                float currentValue = rightTriggerRef.action.ReadValue<float>();
+                _rightButtons[0].value = currentValue;
+                _rightButtons[0].pressed = currentValue > 0.1f;
+            }
+            
+            if (IsActionEnabled(rightGripRef)) {
+                float currentValue = rightGripRef.action.ReadValue<float>();
+                _rightButtons[1].value = currentValue;
+                _rightButtons[1].pressed = currentValue > 0.1f;
+            }
+            
             // 更新摇杆轴数据
             if (IsActionEnabled(left2DAxisRef)) {
                 Vector2 newLeftAxis = left2DAxisRef.action.ReadValue<Vector2>();
@@ -423,7 +462,7 @@ namespace DataTracking
                 }
             }
             
-            // 检查并输出按钮状态变化的日志
+            // 检查并输出按钮状态变化的日志（ABXY按钮）
             CheckAndLogButtonChanges();
             
             // 每帧发送数据到服务器
@@ -432,93 +471,53 @@ namespace DataTracking
 
         private void CheckAndLogButtonChanges()
         {
-            // 检查左手柄按钮状态变化
+            // 检查左手柄按钮状态变化（仅ABXY按钮）
             if (IsActionEnabled(leftXButtonRef))
             {
-                bool currentlyPressed = leftXButtonRef.action.ReadValue<float>() > 0.5f;
+                float currentValue = leftXButtonRef.action.ReadValue<float>();
+                bool currentlyPressed = currentValue > 0.5f;
                 if (currentlyPressed != _leftButtons[4].pressed)
                 {
                     _leftButtons[4].pressed = currentlyPressed;
-                    _leftButtons[4].value = currentlyPressed ? 1f : 0f;
+                    _leftButtons[4].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
                     Debug.Log($"左手X键{(currentlyPressed ? "按下" : "释放")}");
                 }
             }
 
             if (IsActionEnabled(leftYButtonRef))
             {
-                bool currentlyPressed = leftYButtonRef.action.ReadValue<float>() > 0.5f;
+                float currentValue = leftYButtonRef.action.ReadValue<float>();
+                bool currentlyPressed = currentValue > 0.5f;
                 if (currentlyPressed != _leftButtons[5].pressed)
                 {
                     _leftButtons[5].pressed = currentlyPressed;
-                    _leftButtons[5].value = currentlyPressed ? 1f : 0f;
+                    _leftButtons[5].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
                     Debug.Log($"左手Y键{(currentlyPressed ? "按下" : "释放")}");
                 }
             }
 
-            if (IsActionEnabled(leftTriggerRef))
-            {
-                bool currentlyPressed = leftTriggerRef.action.ReadValue<float>() > 0.5f;
-                if (currentlyPressed != _leftButtons[0].pressed)
-                {
-                    _leftButtons[0].pressed = currentlyPressed;
-                    _leftButtons[0].value = currentlyPressed ? 1f : 0f;
-                    Debug.Log($"左手Trigger键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            if (IsActionEnabled(leftGripRef))
-            {
-                bool currentlyPressed = leftGripRef.action.ReadValue<float>() > 0.5f;
-                if (currentlyPressed != _leftButtons[1].pressed)
-                {
-                    _leftButtons[1].pressed = currentlyPressed;
-                    _leftButtons[1].value = currentlyPressed ? 1f : 0f;
-                    Debug.Log($"左手Grip键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            // 检查右手柄按钮状态变化
+            // 检查右手柄按钮状态变化（仅ABXY按钮）
             if (IsActionEnabled(rightAButtonRef))
             {
-                bool currentlyPressed = rightAButtonRef.action.ReadValue<float>() > 0.5f;
+                float currentValue = rightAButtonRef.action.ReadValue<float>();
+                bool currentlyPressed = currentValue > 0.5f;
                 if (currentlyPressed != _rightButtons[4].pressed)
                 {
                     _rightButtons[4].pressed = currentlyPressed;
-                    _rightButtons[4].value = currentlyPressed ? 1f : 0f;
+                    _rightButtons[4].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
                     Debug.Log($"右手A键{(currentlyPressed ? "按下" : "释放")}");
                 }
             }
 
             if (IsActionEnabled(rightBButtonRef))
             {
-                bool currentlyPressed = rightBButtonRef.action.ReadValue<float>() > 0.5f;
+                float currentValue = rightBButtonRef.action.ReadValue<float>();
+                bool currentlyPressed = currentValue > 0.5f;
                 if (currentlyPressed != _rightButtons[5].pressed)
                 {
                     _rightButtons[5].pressed = currentlyPressed;
-                    _rightButtons[5].value = currentlyPressed ? 1f : 0f;
+                    _rightButtons[5].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
                     Debug.Log($"右手B键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            if (IsActionEnabled(rightTriggerRef))
-            {
-                bool currentlyPressed = rightTriggerRef.action.ReadValue<float>() > 0.5f;
-                if (currentlyPressed != _rightButtons[0].pressed)
-                {
-                    _rightButtons[0].pressed = currentlyPressed;
-                    _rightButtons[0].value = currentlyPressed ? 1f : 0f;
-                    Debug.Log($"右手Trigger键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            if (IsActionEnabled(rightGripRef))
-            {
-                bool currentlyPressed = rightGripRef.action.ReadValue<float>() > 0.5f;
-                if (currentlyPressed != _rightButtons[1].pressed)
-                {
-                    _rightButtons[1].pressed = currentlyPressed;
-                    _rightButtons[1].value = currentlyPressed ? 1f : 0f;
-                    Debug.Log($"右手Grip键{(currentlyPressed ? "按下" : "释放")}");
                 }
             }
         }

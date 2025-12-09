@@ -3542,30 +3542,30 @@
                 },
                 {
                     "name": "Active Right Grip",
-                    "type": "Button",
+                    "type": "Value",
                     "id": "ec0a060a-de7c-43b1-ba6f-836f3060cfc2",
-                    "expectedControlType": "",
+                    "expectedControlType": "Axis",
                     "processors": "",
                     "interactions": "",
-                    "initialStateCheck": false
+                    "initialStateCheck": true
                 },
                 {
                     "name": "Active Right Trigger",
-                    "type": "Button",
+                    "type": "Value",
                     "id": "b347e142-3de4-4c92-b4d8-8e2c88cfb925",
-                    "expectedControlType": "",
+                    "expectedControlType": "Axis",
                     "processors": "",
                     "interactions": "",
-                    "initialStateCheck": false
+                    "initialStateCheck": true
                 },
                 {
                     "name": "Active Left Grip",
-                    "type": "Button",
+                    "type": "Value",
                     "id": "124b8329-b99c-4540-a6e6-1abdc80c9a61",
-                    "expectedControlType": "",
+                    "expectedControlType": "Axis",
                     "processors": "",
                     "interactions": "",
-                    "initialStateCheck": false
+                    "initialStateCheck": true
                 },
                 {
                     "name": "Active Left Y",
@@ -3587,12 +3587,12 @@
                 },
                 {
                     "name": "Active Left Trigger",
-                    "type": "Button",
+                    "type": "Value",
                     "id": "e5a3a461-4ae9-40ed-b84e-4816ca0abf70",
-                    "expectedControlType": "",
+                    "expectedControlType": "Axis",
                     "processors": "",
                     "interactions": "",
-                    "initialStateCheck": false
+                    "initialStateCheck": true
                 },
                 {
                     "name": "Active Left Axis",
@@ -3639,7 +3639,7 @@
                 {
                     "name": "",
                     "id": "d85d00d0-352d-47dc-8a83-77eb140cdd0d",
-                    "path": "<XRController>{RightHand}/{GripButton}",
+                    "path": "<XRController>{RightHand}/{Grip}",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -3650,7 +3650,7 @@
                 {
                     "name": "",
                     "id": "200e71ca-db1a-45e6-a612-d232508c9922",
-                    "path": "<XRController>{LeftHand}/{GripButton}",
+                    "path": "<XRController>{LeftHand}/{Grip}",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -3661,7 +3661,7 @@
                 {
                     "name": "",
                     "id": "42df0a0c-9717-4182-bdce-14b92431f593",
-                    "path": "<XRController>{RightHand}/{TriggerButton}",
+                    "path": "<XRController>{RightHand}/{Trigger}",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -3694,7 +3694,7 @@
                 {
                     "name": "",
                     "id": "164baa09-90f0-41be-9a40-559acaf147a7",
-                    "path": "<XRController>{LeftHand}/{TriggerButton}",
+                    "path": "<XRController>{LeftHand}/{Trigger}",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
