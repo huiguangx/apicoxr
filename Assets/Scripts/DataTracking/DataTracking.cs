@@ -1,3 +1,4 @@
+
 using UnityEngine;
 using UnityEngine.InputSystem;
 using System.Collections;
@@ -272,57 +273,64 @@ namespace DataTracking
 
         private void SendVRDataToServer()
         {
+            // 调试：打印函数开始时接收到的缓存数据
+            Debug.Log($"[SendVR-开始] 右手位置缓存={_rightPosition}, 旋转缓存={_rightRotation}");
+
             // 计算发送频率相关信息
             float currentTime = Time.time;
             _sendCounter++;
-            
+
             // 如果不是第一次发送，则计算与上次发送的时间间隔
             if (_lastSendTime >= 0)
             {
                 float timeSinceLastSend = currentTime - _lastSendTime;
                 // Debug.Log($"[HTTP发送频率] #{_sendCounter}: 间隔={timeSinceLastSend:F4}s, 频率={(1f/timeSinceLastSend):F1}Hz");
             }
-            
+
             // 更新上次发送时间
             _lastSendTime = currentTime;
-            
+
             var data = new SendVRData();
 
-            // Head
-            data.head.position = new Vector3Data(LHtoRH_Vector3(GetHeadPosition()));
-            data.head.rotation = new QuaternionData(LHtoRH_Quaternion(GetHeadRotation()));
-            data.head.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetHeadVelocity()));
-            data.head.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetHeadAngularVelocity()));
+            // Head - 直接使用Update中缓存的数据
+            data.head.position = new Vector3Data(LHtoRH_Vector3(_headPosition));
+            data.head.rotation = new QuaternionData(LHtoRH_Quaternion(_headRotation));
+            data.head.linearVelocity = new Vector4Data(LHtoRH_Vector3(_headVelocity));
+            data.head.angularVelocity = new Vector4Data(LHtoRH_Vector3(_headAngularVelocity));
 
-            // Left
-            data.left.position = new Vector3Data(LHtoRH_Vector3(GetLeftPosition()));
+            // Left - 直接使用Update中缓存的数据
+            data.left.position = new Vector3Data(LHtoRH_Vector3(_leftPosition));
 
             // 左手旋转：如果启用旋转映射，则应用映射
-            Quaternion leftRotation = GetLetfRotation();
+            Quaternion leftRotation = _leftRotation;
             if (enableWristRotationMapping && wristRotationMapper != null)
             {
                 leftRotation = wristRotationMapper.MapControllerToWrist(leftRotation);
             }
             data.left.rotation = new QuaternionData(LHtoRH_Quaternion(leftRotation));
 
-            data.left.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetLeftVelocity()));
-            data.left.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetLeftAngularVelocity()));
+            data.left.linearVelocity = new Vector4Data(LHtoRH_Vector3(_leftVelocity));
+            data.left.angularVelocity = new Vector4Data(LHtoRH_Vector3(_leftAngularVelocity));
             // left.button 保持默认（全 false）
             // left.axes 已在构造函数中初始化为 [0,0,0,0]
 
-            // Right
-            data.right.position = new Vector3Data(LHtoRH_Vector3(GetRightPosition()));
+            // Right - 直接使用Update中缓存的数据
+            Vector3 rightPosRH = LHtoRH_Vector3(_rightPosition);
+            data.right.position = new Vector3Data(rightPosRH);
+            // Debug.Log($"[SendVR-转换] 右手位置转换后={rightPosRH}");
 
             // 右手旋转：如果启用旋转映射，则应用映射
-            Quaternion rightRotation = GetRightRotation();
+            Quaternion rightRotation = _rightRotation;
             if (enableWristRotationMapping && wristRotationMapper != null)
             {
                 rightRotation = wristRotationMapper.MapControllerToWrist(rightRotation);
             }
-            data.right.rotation = new QuaternionData(LHtoRH_Quaternion(rightRotation));
+            Quaternion rightRotRH = LHtoRH_Quaternion(rightRotation);
+            data.right.rotation = new QuaternionData(rightRotRH);
+            // Debug.Log($"[SendVR-转换] 右手旋转转换后={rightRotRH}");
 
-            data.right.linearVelocity = new Vector4Data(LHtoRH_Vector3(GetRightVelocity()));
-            data.right.angularVelocity = new Vector4Data(LHtoRH_Vector3(GetRightAngularVelocity()));
+            data.right.linearVelocity = new Vector4Data(LHtoRH_Vector3(_rightVelocity));
+            data.right.angularVelocity = new Vector4Data(LHtoRH_Vector3(_rightAngularVelocity));
 
             // 深拷贝按钮状态
             // Left buttons
@@ -363,7 +371,10 @@ namespace DataTracking
             data.timestamp = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             string json = JsonUtility.ToJson(data, true);
-            
+            string rightJson = JsonUtility.ToJson(data.right.position, true);
+            string rightJsonRot = JsonUtility.ToJson(_rightPosition, true);
+            Debug.Log("✅ 发送右手数据" + rightJson + rightJsonRot);
+            // Debug.Log($"[Update] 右手位置={_rightPosition}, 旋转={_rightRotation}");
             // 发送到服务器
             StartCoroutine(PostDataToServer(json, _sendCounter));
         }
@@ -429,7 +440,8 @@ namespace DataTracking
                 _headVelocity = deviceHeadVelocityRef.action.ReadValue<Vector3>();
             if (IsActionEnabled(deviceHeadAngularVelocityRef))
                 _headAngularVelocity = deviceHeadAngularVelocityRef.action.ReadValue<Vector3>();
-                
+            // Debug.Log("✅ 1头部位置" + _headPosition);
+            
             if (IsActionEnabled(leftPositionRef))
                 _leftPosition = leftPositionRef.action.ReadValue<Vector3>();
             if (IsActionEnabled(leftRotationRef))
@@ -438,6 +450,7 @@ namespace DataTracking
                 _leftVelocity = leftVelocityRef.action.ReadValue<Vector3>();
             if (IsActionEnabled(leftAngularVelocityRef))
                 _leftAngularVelocity = leftAngularVelocityRef.action.ReadValue<Vector3>();
+            // Debug.Log("✅ 2左手位置" + _leftPosition);
                 
             if (IsActionEnabled(rightPositionRef))
                 _rightPosition = rightPositionRef.action.ReadValue<Vector3>();
@@ -447,6 +460,7 @@ namespace DataTracking
                 _rightVelocity = rightVelocityRef.action.ReadValue<Vector3>();
             if (IsActionEnabled(rightAngularVelocityRef))
                 _rightAngularVelocity = rightAngularVelocityRef.action.ReadValue<Vector3>();
+            // Debug.Log($"[Update] 右手位置={_rightPosition}, 旋转={_rightRotation}");
             
             // 每帧更新Trigger和Grip的值
             if (IsActionEnabled(leftTriggerRef)) {

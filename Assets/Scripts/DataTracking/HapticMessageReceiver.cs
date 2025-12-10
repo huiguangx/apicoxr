@@ -90,15 +90,10 @@ namespace DataTracking
             request.certificateHandler = new CustomCertificateHandler();
             request.disposeCertificateHandlerOnDispose = true;
             request.timeout = 2; // 2秒超时
-
-            Debug.Log($"🌐 请求URL: {url}");
             yield return request.SendWebRequest();
 
             // 打印完整的响应信息
-            Debug.Log($"📡 响应码: {request.responseCode}");
-            Debug.Log($"📡 响应结果: {request.result}");
             Debug.Log($"📡 响应内容: {request.downloadHandler.text}");
-            Debug.Log($"📡 错误信息: {request.error}");
 
             if (request.result == UnityWebRequest.Result.Success)
             {
