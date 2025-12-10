@@ -1,398 +1,354 @@
-
 using UnityEngine;
-using UnityEngine.InputSystem;
 using System.Collections;
 using Unity.XR.PXR;
+using UnityEngine.XR;
 
 namespace DataTracking
 {
+    /// <summary>
+    /// XR设备位姿数据采集与发送
+    /// 自动采集头显和手柄数据，发送到服务器
+    /// </summary>
     public class DataTracking : MonoBehaviour
     {
-        [Header("XRI Default Input Actions 中的 Head Position/Rotation Action")]
-        public InputActionReference deviceHeadPositionRef;
-        public InputActionReference deviceHeadRotationRef;
-        public InputActionReference deviceHeadVelocityRef;
-        public InputActionReference deviceHeadAngularVelocityRef;
+        [Header("调试选项")]
+        [SerializeField] private bool enableDebugLog = false;
 
-        [Header("Left Hand")]
-        public InputActionReference leftPositionRef;
-        public InputActionReference leftRotationRef;
-        public InputActionReference leftVelocityRef;
-        public InputActionReference leftAngularVelocityRef;
-        public InputActionReference leftGripRef;
-        public InputActionReference leftXButtonRef;  // 左手X按键
-        public InputActionReference leftYButtonRef;  // 左手Y按键
-        public InputActionReference leftTriggerRef;  // 左手Trigger按键
-        public InputActionReference left2DAxisRef;   // 左手2D摇杆轴
-
-        [Header("Right Hand")]
-        public InputActionReference rightPositionRef;
-        public InputActionReference rightRotationRef;
-        public InputActionReference rightVelocityRef;
-        public InputActionReference rightAngularVelocityRef;
-        public InputActionReference rightAButtonRef;
-        public InputActionReference rightBButtonRef;
-        public InputActionReference rightGripRef;
-        public InputActionReference rightTriggerRef; // 右手Trigger按键
-        public InputActionReference right2DAxisRef;  // 右手2D摇杆轴
-
-        [Header("手腕旋转映射（可选）")]
+        [Header("手腕旋转映射")]
         [Tooltip("启用手腕旋转映射（解决手柄旋转轴和机器人手腕旋转轴不一致的问题）")]
         public bool enableWristRotationMapping = false;
         [Tooltip("拖入 WristRotationMapper 组件")]
         public WristRotationMapper wristRotationMapper;
 
-        // Head
-        private Vector3 _headPosition = Vector3.zero;
-        private Quaternion _headRotation = Quaternion.identity;
-        private Vector3 _headVelocity = Vector3.zero;
-        private Vector3 _headAngularVelocity = Vector3.zero;
+        [Header("网络设置")]
+        [SerializeField] private string serverUrl = "https://127.0.0.1:5000/poseData";
 
-        // Left Hand
-        private Vector3 _leftPosition = Vector3.zero;
-        private Quaternion _leftRotation = Quaternion.identity;
-        private Vector3 _leftVelocity = Vector3.zero;
-        private Vector3 _leftAngularVelocity = Vector3.zero;
+        // XR设备引用
+        private InputDevice headDevice;
+        private InputDevice leftHandDevice;
+        private InputDevice rightHandDevice;
 
-        // Right Hand
-        private Vector3 _rightPosition = Vector3.zero;
-        private Quaternion _rightRotation = Quaternion.identity;
-        private Vector3 _rightVelocity = Vector3.zero;
-        private Vector3 _rightAngularVelocity = Vector3.zero;
-        // Left Buttons: 7 个按钮状态（index 2 = Grip）
-        private ButtonState[] _leftButtons;
-        // Right Buttons: 7 个按钮状态（index 4 = A, index 5 = B）
-        private ButtonState[] _rightButtons;
-
-        // Left Joystick Axes
-        private Vector2 _left2DAxis = Vector2.zero; // 左手2D摇杆轴数据
-        // Right Joystick Axes
-        private Vector2 _right2DAxis = Vector2.zero; // 右手2D摇杆轴数据
-
-        [Header("Network Settings")]
-        [Tooltip("服务器完整 URL (从 UIController 自动获取)")]
-        [SerializeField]
-        private string serverUrl = "https://127.0.0.1:5000/poseData"; // 仅显示，实际从 UIController 获取
-        // private float lastSendTime = 0f;
-        public float sendInterval = 0.1f; // 发送间隔（秒）
+        // 缓存数据
+        private PoseCache headCache = new PoseCache();
+        private ControllerCache leftCache = new ControllerCache();
+        private ControllerCache rightCache = new ControllerCache();
 
         private UIController uiController;
-
-        // 透视功能状态
         private bool _isSeethroughEnabled = true;
-        private float _lastSendTime = -1f;  // 记录上次发送时间，初始值设为-1表示尚未发送过
-        private int _sendCounter = 0;      // 发送计数器
+        private float _lastSendTime = -1f;
+        private int _sendCounter = 0;
+
+        #region Unity生命周期
 
         private void Awake()
+        {
+            InitializeDevices();
+
+            InputDevices.deviceConnected += OnDeviceConnected;
+            InputDevices.deviceDisconnected += OnDeviceDisconnected;
+
+            uiController = FindFirstObjectByType<UIController>();
+            if (uiController == null && enableDebugLog)
             {
-                // 视频透视
-                // PXR_Manager.EnableVideoSeeThrough = true;
+                Debug.LogWarning("⚠️ 未找到 UIController，将使用默认 serverUrl");
+            }
+        }
 
-                // // 配置主相机以支持视频透视（必须设置！）
-                // Camera mainCamera = Camera.main;
-                // if (mainCamera != null)
-                // {
-                //     mainCamera.clearFlags = CameraClearFlags.SolidColor;
-                //     Color bgColor = mainCamera.backgroundColor;
-                //     bgColor.a = 0f; // Alpha 必须为 0 才能显示透视层
-                //     mainCamera.backgroundColor = bgColor;
-                //     Debug.Log("✅ 已配置主相机支持视频透视: ClearFlags=SolidColor, Alpha=0");
-                // }
-                // else
-                // {
-                //     Debug.LogError("❌ 未找到主相机！无法配置视频透视");
-                // }
+        private void OnDestroy()
+        {
+            InputDevices.deviceConnected -= OnDeviceConnected;
+            InputDevices.deviceDisconnected -= OnDeviceDisconnected;
+        }
 
-                // 初始化按钮数组
-                _leftButtons = new ButtonState[7];
-                _rightButtons = new ButtonState[7];
-                for (int i = 0; i < 7; i++)
-                {
-                    _leftButtons[i] = new ButtonState();
-                    _rightButtons[i] = new ButtonState();
-                }
-
-                // Head
-                EnableAction(deviceHeadPositionRef);
-                EnableAction(deviceHeadRotationRef);
-                EnableAction(deviceHeadVelocityRef);
-                EnableAction(deviceHeadAngularVelocityRef);
-
-                // Left
-                EnableAction(leftPositionRef);
-                EnableAction(leftRotationRef);
-                EnableAction(leftVelocityRef);
-                EnableAction(leftAngularVelocityRef);
-                EnableAction(leftGripRef);
-                EnableAction(leftXButtonRef);  // 启用左手X按键
-                EnableAction(leftYButtonRef);  // 启用左手Y按键
-                EnableAction(leftTriggerRef);  // 启用左手Trigger按键
-                EnableAction(left2DAxisRef);   // 启用左手2D摇杆轴
-
-                // Right
-                EnableAction(rightPositionRef);
-                EnableAction(rightRotationRef);
-                EnableAction(rightVelocityRef);
-                EnableAction(rightAngularVelocityRef);
-                EnableAction(rightAButtonRef);
-                EnableAction(rightBButtonRef);
-                EnableAction(rightGripRef);
-                EnableAction(rightTriggerRef); // 启用右手Trigger按键
-                EnableAction(right2DAxisRef);  // 启用右手2D摇杆轴
-
-                // 获取 UIController 引用
-                uiController = UnityEngine.Object.FindObjectOfType<UIController>();
-                if (uiController == null)
-                {
-                    // Debug.LogWarning("⚠️ 未找到 UIController，将使用默认 serverUrl");
-                }
+        private void Update()
+        {
+            // 更新服务器URL
+            if (uiController != null)
+            {
+                serverUrl = "https://" + uiController.serverBaseUrl + "/poseData";
             }
 
-        private void OnEnable()
-        {
-            // 不再需要订阅事件，所有数据都在Update中直接读取
+            // 确保设备有效
+            if (!headDevice.isValid || !leftHandDevice.isValid || !rightHandDevice.isValid)
+            {
+                InitializeDevices();
+            }
+
+            // 采集并发送数据
+            CollectAllDeviceData();
+            SendDataToServer();
         }
 
-        private void OnDisable()
+        #endregion
+
+        #region 设备管理
+
+        private void InitializeDevices()
         {
-            // 不再需要取消订阅事件
+            headDevice = InputDevices.GetDeviceAtXRNode(XRNode.Head);
+            leftHandDevice = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
+            rightHandDevice = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
+
+            if (enableDebugLog)
+            {
+                Debug.Log($"[XR设备] 初始化: Head={headDevice.isValid}, Left={leftHandDevice.isValid}, Right={rightHandDevice.isValid}");
+            }
         }
 
-        // --- Helper Methods ---
-        private void EnableAction(InputActionReference actionRef)
+        private void OnDeviceConnected(InputDevice device)
         {
-            actionRef?.action?.Enable();
+            if (enableDebugLog)
+                Debug.Log($"[XR设备] 设备连接: {device.name}, Role: {device.role}");
+            InitializeDevices();
         }
 
-        private void DisableAction(InputActionReference actionRef)
+        private void OnDeviceDisconnected(InputDevice device)
         {
-            actionRef?.action?.Disable();
+            if (enableDebugLog)
+                Debug.Log($"[XR设备] 设备断开: {device.name}");
         }
 
-        private void SubscribeVector3(InputActionReference actionRef, System.Action<Vector3> callback)
+        #endregion
+
+        #region 数据采集
+
+        private void CollectAllDeviceData()
         {
-            if (actionRef != null)
-                actionRef.action.performed += ctx => callback(ctx.ReadValue<Vector3>());
+            if (headDevice.isValid)
+            {
+                CollectPoseData(headDevice, headCache);
+            }
+
+            if (leftHandDevice.isValid)
+            {
+                CollectPoseData(leftHandDevice, leftCache);
+                CollectButtonData(leftHandDevice, leftCache.buttons);
+                CollectJoystickData(leftHandDevice, ref leftCache.joystick);
+            }
+
+            if (rightHandDevice.isValid)
+            {
+                CollectPoseData(rightHandDevice, rightCache);
+                CollectButtonData(rightHandDevice, rightCache.buttons);
+                CollectJoystickData(rightHandDevice, ref rightCache.joystick);
+            }
         }
-
-        private void SubscribeQuaternion(InputActionReference actionRef, System.Action<Quaternion> callback)
-        {
-            if (actionRef != null)
-                actionRef.action.performed += ctx => callback(ctx.ReadValue<Quaternion>());
-        }
-
-        private void SubscribeVector2(InputActionReference actionRef, System.Action<Vector2> callback)
-        {
-            if (actionRef != null)
-                actionRef.action.performed += ctx => callback(ctx.ReadValue<Vector2>());
-        }
-
-        // 左手系 Vector3 → 右手系
-        private Vector3 LHtoRH_Vector3(Vector3 v)
-        {
-            return new Vector3(v.x, v.y, -v.z);
-        }
-
-        // 左手系 Quaternion → 右手系
-        private Quaternion LHtoRH_Quaternion(Quaternion q)
-
-        {
-            return new Quaternion(-q.x, -q.y, q.z, q.w);
-        }
-
 
         /// <summary>
-        /// PCVR 模式震动支持
+        /// 采集设备位姿和速度数据
         /// </summary>
-        private void TriggerHapticForPCVR(InputAction.CallbackContext ctx)
+        private void CollectPoseData(InputDevice device, PoseCache cache)
         {
-            try
-            {
-                // 使用 Unity XR 标准 API（PCVR 兼容）
-                var xrDevices = new System.Collections.Generic.List<UnityEngine.XR.InputDevice>();
-                UnityEngine.XR.InputDevices.GetDevicesWithCharacteristics(
-                    UnityEngine.XR.InputDeviceCharacteristics.Controller |
-                    UnityEngine.XR.InputDeviceCharacteristics.Right,
-                    xrDevices
-                );
-
-                foreach (var device in xrDevices)
-                {
-                    if (device.TryGetHapticCapabilities(out var capabilities) && capabilities.supportsImpulse)
-                    {
-                        device.SendHapticImpulse(0, 0.8f, 0.3f);
-                        Debug.Log($"✅ PCVR 震动发送到: {device.name}");
-                    }
-                }
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning($"⚠️ PCVR 震动失败: {e.Message}");
-            }
+            device.TryGetFeatureValue(CommonUsages.devicePosition, out cache.position);
+            device.TryGetFeatureValue(CommonUsages.deviceRotation, out cache.rotation);
+            device.TryGetFeatureValue(CommonUsages.deviceVelocity, out cache.velocity);
+            device.TryGetFeatureValue(CommonUsages.deviceAngularVelocity, out cache.angularVelocity);
         }
 
-        // --- Getters (直接读取实时数据) ---
-        public Vector3 GetHeadPosition() => 
-            IsActionEnabled(deviceHeadPositionRef) ? deviceHeadPositionRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Quaternion GetHeadRotation() => 
-            IsActionEnabled(deviceHeadRotationRef) ? deviceHeadRotationRef.action.ReadValue<Quaternion>() : Quaternion.identity;
-
-        public Vector3 GetHeadVelocity() => 
-            IsActionEnabled(deviceHeadVelocityRef) ? deviceHeadVelocityRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Vector3 GetHeadAngularVelocity() => 
-            IsActionEnabled(deviceHeadAngularVelocityRef) ? deviceHeadAngularVelocityRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Vector3 GetLeftPosition() => 
-            IsActionEnabled(leftPositionRef) ? leftPositionRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Quaternion GetLetfRotation() => 
-            IsActionEnabled(leftRotationRef) ? leftRotationRef.action.ReadValue<Quaternion>() : Quaternion.identity;
-
-        public Vector3 GetLeftVelocity() => 
-            IsActionEnabled(leftVelocityRef) ? leftVelocityRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Vector3 GetLeftAngularVelocity() => 
-            IsActionEnabled(leftAngularVelocityRef) ? leftAngularVelocityRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Vector3 GetRightPosition() => 
-            IsActionEnabled(rightPositionRef) ? rightPositionRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Quaternion GetRightRotation() => 
-            IsActionEnabled(rightRotationRef) ? rightRotationRef.action.ReadValue<Quaternion>() : Quaternion.identity;
-
-        public Vector3 GetRightVelocity() => 
-            IsActionEnabled(rightVelocityRef) ? rightVelocityRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        public Vector3 GetRightAngularVelocity() => 
-            IsActionEnabled(rightAngularVelocityRef) ? rightAngularVelocityRef.action.ReadValue<Vector3>() : Vector3.zero;
-
-        private bool IsActionEnabled(InputActionReference actionRef) =>
-            actionRef?.action?.enabled == true;
-
-        private void SendVRDataToServer()
+        /// <summary>
+        /// 采集手柄按钮数据
+        /// </summary>
+        private void CollectButtonData(InputDevice device, ButtonState[] buttons)
         {
-            // 调试：打印函数开始时接收到的缓存数据
-            Debug.Log($"[SendVR-开始] 右手位置缓存={_rightPosition}, 旋转缓存={_rightRotation}");
+            string deviceName = device == leftHandDevice ? "左手" : "右手";
 
-            // 计算发送频率相关信息
-            float currentTime = Time.time;
-            _sendCounter++;
+            // 索引0: Trigger
+            device.TryGetFeatureValue(CommonUsages.trigger, out float triggerValue);
+            device.TryGetFeatureValue(CommonUsages.triggerButton, out bool triggerButton);
+            SetButtonWithLog(buttons[0], triggerValue, triggerButton, triggerButton, $"{deviceName} Trigger");
 
-            // 如果不是第一次发送，则计算与上次发送的时间间隔
-            if (_lastSendTime >= 0)
+            // 索引1: Grip
+            device.TryGetFeatureValue(CommonUsages.grip, out float gripValue);
+            device.TryGetFeatureValue(CommonUsages.gripButton, out bool gripButton);
+            SetButtonWithLog(buttons[1], gripValue, gripButton, gripButton, $"{deviceName} Grip");
+
+            // 索引2: 摇杆按下
+            device.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool joystickClick);
+            SetButtonWithLog(buttons[2], joystickClick ? 1f : 0f, joystickClick, false, $"{deviceName} 摇杆按下");
+
+            // 索引3: 占位符
+            buttons[3].Set(0f, false, false);
+
+            // 索引4: X/A键 (Primary Button)
+            device.TryGetFeatureValue(CommonUsages.primaryButton, out bool primaryButton);
+            device.TryGetFeatureValue(CommonUsages.primaryTouch, out bool primaryTouch);
+            SetButtonWithLog(buttons[4], primaryButton ? 1f : 0f, primaryButton, primaryTouch, $"{deviceName} {(device == leftHandDevice ? "X" : "A")}键");
+
+            // 索引5: Y/B键 (Secondary Button)
+            device.TryGetFeatureValue(CommonUsages.secondaryButton, out bool secondaryButton);
+            device.TryGetFeatureValue(CommonUsages.secondaryTouch, out bool secondaryTouch);
+            SetButtonWithLog(buttons[5], secondaryButton ? 1f : 0f, secondaryButton, secondaryTouch, $"{deviceName} {(device == leftHandDevice ? "Y" : "B")}键");
+
+            // 索引6: 占位符
+            buttons[6].Set(0f, false, false);
+        }
+
+        /// <summary>
+        /// 设置按钮状态并在状态变化时打印日志
+        /// </summary>
+        private void SetButtonWithLog(ButtonState button, float value, bool pressed, bool touched, string buttonName)
+        {
+            bool stateChanged = button.pressed != pressed || button.touched != touched;
+
+            if (stateChanged && enableDebugLog)
             {
-                float timeSinceLastSend = currentTime - _lastSendTime;
-                // Debug.Log($"[HTTP发送频率] #{_sendCounter}: 间隔={timeSinceLastSend:F4}s, 频率={(1f/timeSinceLastSend):F1}Hz");
+                Debug.Log($"[按键] {buttonName}: value={value:F3}, pressed={pressed}, touched={touched}");
             }
 
-            // 更新上次发送时间
+            button.Set(value, pressed, touched);
+        }
+
+        /// <summary>
+        /// 采集摇杆数据
+        /// </summary>
+        private void CollectJoystickData(InputDevice device, ref Vector2 joystick)
+        {
+            device.TryGetFeatureValue(CommonUsages.primary2DAxis, out joystick);
+        }
+
+        #endregion
+
+        #region 数据发送
+
+        private void SendDataToServer()
+        {
+            _sendCounter++;
+            float currentTime = Time.time;
+
+            if (_lastSendTime >= 0 && enableDebugLog)
+            {
+                float interval = currentTime - _lastSendTime;
+                Debug.Log($"[HTTP发送] #{_sendCounter}: 间隔={interval:F4}s, 频率={(1f/interval):F1}Hz");
+            }
             _lastSendTime = currentTime;
 
+            var data = BuildSendData();
+
+            // 打印右手数据
+            // if (enableDebugLog)
+            // {
+                LogControllerData("Right", data.right);
+            // }
+
+            string json = JsonUtility.ToJson(data, enableDebugLog);
+
+            if (enableDebugLog)
+            {
+                Debug.Log($"✅ 发送VR数据JSON: {json}");
+            }
+
+            StartCoroutine(PostDataToServer(json));
+        }
+
+        /// <summary>
+        /// 打印头显数据日志
+        /// </summary>
+        private void LogDeviceData(string deviceName, HeadInfo head)
+        {
+            // Debug.Log($"[{deviceName}] 位置: ({head.position.x:F3}, {head.position.y:F3}, {head.position.z:F3})");
+            // Debug.Log($"[{deviceName}] 旋转: ({head.rotation.x:F3}, {head.rotation.y:F3}, {head.rotation.z:F3}, {head.rotation.w:F3})");
+            // Debug.Log($"[{deviceName}] 线速度: ({head.linearVelocity.x:F3}, {head.linearVelocity.y:F3}, {head.linearVelocity.z:F3})");
+            // Debug.Log($"[{deviceName}] 角速度: ({head.angularVelocity.x:F3}, {head.angularVelocity.y:F3}, {head.angularVelocity.z:F3})");
+            string headString = JsonUtility.ToJson(head, true);
+            Debug.Log($"✅ 发送VR数据JSON: {headString}");
+        }
+
+        /// <summary>
+        /// 打印手柄数据日志
+        /// </summary>
+        private void LogControllerData(string deviceName, ControllerInfo controller)
+        {
+            // Debug.Log($"[{deviceName}] 位置: ({controller.position.x:F3}, {controller.position.y:F3}, {controller.position.z:F3})");
+            // Debug.Log($"[{deviceName}] 旋转: ({controller.rotation.x:F3}, {controller.rotation.y:F3}, {controller.rotation.z:F3}, {controller.rotation.w:F3})");
+            // Debug.Log($"[{deviceName}] 线速度: ({controller.linearVelocity.x:F3}, {controller.linearVelocity.y:F3}, {controller.linearVelocity.z:F3})");
+            // Debug.Log($"[{deviceName}] 角速度: ({controller.angularVelocity.x:F3}, {controller.angularVelocity.y:F3}, {controller.angularVelocity.z:F3})");
+
+            // 打印按钮状态
+            string buttonStates = "";
+            for (int i = 0; i < controller.button.Length; i++)
+            {
+                if (controller.button[i].pressed || controller.button[i].touched)
+                {
+                    buttonStates += $"[{i}:v={controller.button[i].value:F2},p={controller.button[i].pressed},t={controller.button[i].touched}] ";
+                }
+            }
+            if (!string.IsNullOrEmpty(buttonStates))
+            {
+                Debug.Log($"[{deviceName}] 按钮: {buttonStates}");
+            }
+
+            // 打印摇杆数据
+            if (controller.axes[2] != 0 || controller.axes[3] != 0)
+            {
+                Debug.Log($"[{deviceName}] 摇杆: X={controller.axes[2]:F3}, Y={controller.axes[3]:F3}");
+            }
+            string controllerString = JsonUtility.ToJson(controller, true);
+            Debug.Log($"✅ 发送VR数据JSON: {controllerString}");
+        }
+
+        private SendVRData BuildSendData()
+        {
             var data = new SendVRData();
 
-            // Head - 直接使用Update中缓存的数据
-            data.head.position = new Vector3Data(LHtoRH_Vector3(_headPosition));
-            data.head.rotation = new QuaternionData(LHtoRH_Quaternion(_headRotation));
-            data.head.linearVelocity = new Vector4Data(LHtoRH_Vector3(_headVelocity));
-            data.head.angularVelocity = new Vector4Data(LHtoRH_Vector3(_headAngularVelocity));
+            // Head
+            data.head.position = new Vector3Data(ConvertVector3(headCache.position));
+            data.head.rotation = new QuaternionData(ConvertQuaternion(headCache.rotation));
+            data.head.linearVelocity = new Vector4Data(ConvertVector3(headCache.velocity));
+            data.head.angularVelocity = new Vector4Data(ConvertVector3(headCache.angularVelocity));
 
-            // Left - 直接使用Update中缓存的数据
-            data.left.position = new Vector3Data(LHtoRH_Vector3(_leftPosition));
+            // Left
+            FillControllerData(data.left, leftCache, true);
 
-            // 左手旋转：如果启用旋转映射，则应用映射
-            Quaternion leftRotation = _leftRotation;
-            if (enableWristRotationMapping && wristRotationMapper != null)
-            {
-                leftRotation = wristRotationMapper.MapControllerToWrist(leftRotation);
-            }
-            data.left.rotation = new QuaternionData(LHtoRH_Quaternion(leftRotation));
-
-            data.left.linearVelocity = new Vector4Data(LHtoRH_Vector3(_leftVelocity));
-            data.left.angularVelocity = new Vector4Data(LHtoRH_Vector3(_leftAngularVelocity));
-            // left.button 保持默认（全 false）
-            // left.axes 已在构造函数中初始化为 [0,0,0,0]
-
-            // Right - 直接使用Update中缓存的数据
-            Vector3 rightPosRH = LHtoRH_Vector3(_rightPosition);
-            data.right.position = new Vector3Data(rightPosRH);
-            // Debug.Log($"[SendVR-转换] 右手位置转换后={rightPosRH}");
-
-            // 右手旋转：如果启用旋转映射，则应用映射
-            Quaternion rightRotation = _rightRotation;
-            if (enableWristRotationMapping && wristRotationMapper != null)
-            {
-                rightRotation = wristRotationMapper.MapControllerToWrist(rightRotation);
-            }
-            Quaternion rightRotRH = LHtoRH_Quaternion(rightRotation);
-            data.right.rotation = new QuaternionData(rightRotRH);
-            // Debug.Log($"[SendVR-转换] 右手旋转转换后={rightRotRH}");
-
-            data.right.linearVelocity = new Vector4Data(LHtoRH_Vector3(_rightVelocity));
-            data.right.angularVelocity = new Vector4Data(LHtoRH_Vector3(_rightAngularVelocity));
-
-            // 深拷贝按钮状态
-            // Left buttons
-            data.left.button = new ButtonState[_leftButtons.Length];
-            for (int i = 0; i < _leftButtons.Length; i++)
-            {
-                var src = _leftButtons[i];
-                data.left.button[i] = new ButtonState
-                {
-                    value = src.value,
-                    pressed = src.pressed,
-                    touched = src.touched
-                };
-            }
-
-            // Right buttons
-            data.right.button = new ButtonState[_rightButtons.Length];
-            for (int i = 0; i < _rightButtons.Length; i++)
-            {
-                var src = _rightButtons[i];
-                data.right.button[i] = new ButtonState
-                {
-                    value = src.value,
-                    pressed = src.pressed,
-                    touched = src.touched
-                };
-            }
-
-            // 将左手2D摇杆轴数据填充到 axes 数组的后两位 (索引 2, 3)
-            data.left.axes[2] = _left2DAxis.x;
-            data.left.axes[3] = _left2DAxis.y;
-
-            // 将右手2D摇杆轴数据填充到 axes 数组的后两位 (索引 2, 3)
-            data.right.axes[2] = _right2DAxis.x;
-            data.right.axes[3] = _right2DAxis.y;
-            // Debug.Log("✅ 摇杆数据" + _left2DAxis.x + "," + _left2DAxis.y + "," + _right2DAxis.x + "," + _right2DAxis.y);
+            // Right
+            FillControllerData(data.right, rightCache, false);
 
             data.timestamp = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            string json = JsonUtility.ToJson(data, true);
-            string rightJson = JsonUtility.ToJson(data.right.position, true);
-            string rightJsonRot = JsonUtility.ToJson(_rightPosition, true);
-            Debug.Log("✅ 发送右手数据" + rightJson + rightJsonRot);
-            // Debug.Log($"[Update] 右手位置={_rightPosition}, 旋转={_rightRotation}");
-            // 发送到服务器
-            StartCoroutine(PostDataToServer(json, _sendCounter));
+            return data;
         }
 
-        private IEnumerator PostDataToServer(string jsonData, int sendNumber)
+        private void FillControllerData(ControllerInfo info, ControllerCache cache, bool isLeft)
         {
-            // 从 UIController 获取基础地址并拼接完整 URL
-            string url = serverUrl; // 默认值
-            if (uiController != null)
+            // 位姿
+            info.position = new Vector3Data(ConvertVector3(cache.position));
+
+            // 旋转（应用手腕映射）
+            Quaternion rotation = cache.rotation;
+            if (enableWristRotationMapping && wristRotationMapper != null)
             {
-                // url = "https://" + uiController.serverBaseUrl + "/poseData";
-                url = "https://localhost:5000/poseData"; // 测试固定地址
+                rotation = wristRotationMapper.MapControllerToWrist(rotation);
             }
-            
-            // 检查URL是否有效
+            info.rotation = new QuaternionData(ConvertQuaternion(rotation));
+
+            // 速度
+            info.linearVelocity = new Vector4Data(ConvertVector3(cache.velocity));
+            info.angularVelocity = new Vector4Data(ConvertVector3(cache.angularVelocity));
+
+            // 按钮
+            for (int i = 0; i < 7; i++)
+            {
+                info.button[i] = new ButtonState
+                {
+                    value = cache.buttons[i].value,
+                    pressed = cache.buttons[i].pressed,
+                    touched = cache.buttons[i].touched
+                };
+            }
+
+            // 摇杆
+            info.axes[2] = cache.joystick.x;
+            info.axes[3] = cache.joystick.y;
+        }
+
+        private IEnumerator PostDataToServer(string jsonData)
+        {
+            string url = uiController != null
+                ? "https://localhost:5000/poseData"
+                : serverUrl;
+
             if (string.IsNullOrEmpty(url))
             {
-                Debug.LogError("服务器URL为空");
+                Debug.LogError("❌ 服务器URL为空");
                 yield break;
             }
 
@@ -401,248 +357,44 @@ namespace DataTracking
             request.uploadHandler = new UnityEngine.Networking.UploadHandlerRaw(bodyRaw);
             request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
-
-            // 忽略SSL证书错误（仅用于开发环境）
             request.certificateHandler = new CustomCertificateHandler();
             request.disposeCertificateHandlerOnDispose = true;
 
             yield return request.SendWebRequest();
 
-
             if (request.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
             {
-                // Debug.LogError("发送VR数据失败. 错误信息1: " + request.error +
-                //               "\n响应代码: " + request.responseCode +
-                //               "\nURL: " + url);
+                if (enableDebugLog)
+                {
+                    Debug.LogError($"❌ 发送失败: {request.error} (Code: {request.responseCode})");
+                }
             }
-            else
+            else if (enableDebugLog)
             {
-                // Debug.Log("成功发送VR数据到服务器. 响应代码: " + url + '-' + request.responseCode + jsonData);
+                Debug.Log($"✅ 发送成功 (Code: {request.responseCode})");
             }
 
             request.Dispose();
         }
 
-        void Update()
+        #endregion
+
+        #region 坐标转换（左手系→右手系）
+
+        private Vector3 ConvertVector3(Vector3 v)
         {
-            // 更新 Inspector 显示的 URL（从 UIController 同步）
-            if (uiController != null)
-            {
-                serverUrl = "https://" + uiController.serverBaseUrl + "/poseData";
-            }
-
-            // 每帧直接读取所有输入数据
-            if (IsActionEnabled(deviceHeadPositionRef))
-                _headPosition = deviceHeadPositionRef.action.ReadValue<Vector3>();
-            if (IsActionEnabled(deviceHeadRotationRef))
-                _headRotation = deviceHeadRotationRef.action.ReadValue<Quaternion>();
-            if (IsActionEnabled(deviceHeadVelocityRef))
-                _headVelocity = deviceHeadVelocityRef.action.ReadValue<Vector3>();
-            if (IsActionEnabled(deviceHeadAngularVelocityRef))
-                _headAngularVelocity = deviceHeadAngularVelocityRef.action.ReadValue<Vector3>();
-            // Debug.Log("✅ 1头部位置" + _headPosition);
-            
-            if (IsActionEnabled(leftPositionRef))
-                _leftPosition = leftPositionRef.action.ReadValue<Vector3>();
-            if (IsActionEnabled(leftRotationRef))
-                _leftRotation = leftRotationRef.action.ReadValue<Quaternion>();
-            if (IsActionEnabled(leftVelocityRef))
-                _leftVelocity = leftVelocityRef.action.ReadValue<Vector3>();
-            if (IsActionEnabled(leftAngularVelocityRef))
-                _leftAngularVelocity = leftAngularVelocityRef.action.ReadValue<Vector3>();
-            // Debug.Log("✅ 2左手位置" + _leftPosition);
-                
-            if (IsActionEnabled(rightPositionRef))
-                _rightPosition = rightPositionRef.action.ReadValue<Vector3>();
-            if (IsActionEnabled(rightRotationRef))
-                _rightRotation = rightRotationRef.action.ReadValue<Quaternion>();
-            if (IsActionEnabled(rightVelocityRef))
-                _rightVelocity = rightVelocityRef.action.ReadValue<Vector3>();
-            if (IsActionEnabled(rightAngularVelocityRef))
-                _rightAngularVelocity = rightAngularVelocityRef.action.ReadValue<Vector3>();
-            // Debug.Log($"[Update] 右手位置={_rightPosition}, 旋转={_rightRotation}");
-            
-            // 每帧更新Trigger和Grip的值
-            if (IsActionEnabled(leftTriggerRef)) {
-                float currentValue = leftTriggerRef.action.ReadValue<float>();
-                _leftButtons[0].value = currentValue;
-                _leftButtons[0].pressed = currentValue > 0.1f;
-
-            }
-            
-            if (IsActionEnabled(leftGripRef)) {
-                float currentValue = leftGripRef.action.ReadValue<float>();
-                _leftButtons[1].value = currentValue;
-                _leftButtons[1].pressed = currentValue > 0.1f;
-            }
-            if (IsActionEnabled(rightTriggerRef)) {
-                float currentValue = rightTriggerRef.action.ReadValue<float>();
-                _rightButtons[0].value = currentValue;
-                _rightButtons[0].pressed = currentValue > 0.1f;
-            }
-            
-            if (IsActionEnabled(rightGripRef)) {
-                float currentValue = rightGripRef.action.ReadValue<float>();
-                _rightButtons[1].value = currentValue;
-                _rightButtons[1].pressed = currentValue > 0.1f;
-            }
-            
-            // 更新摇杆轴数据
-            if (IsActionEnabled(left2DAxisRef)) {
-                Vector2 newLeftAxis = left2DAxisRef.action.ReadValue<Vector2>();
-                // 只有当值发生变化时才输出日志
-                if (newLeftAxis != _left2DAxis) {
-                    _left2DAxis = newLeftAxis;
-                    Debug.Log($"左手2D摇杆轴数据更新: x={_left2DAxis.x:F3}, y={_left2DAxis.y:F3}");
-                }
-            }
-                
-            if (IsActionEnabled(right2DAxisRef)) {
-                Vector2 newRightAxis = right2DAxisRef.action.ReadValue<Vector2>();
-                // 只有当值发生变化时才输出日志
-                if (newRightAxis != _right2DAxis) {
-                    _right2DAxis = newRightAxis;
-                    Debug.Log($"右手2D摇杆轴数据更新: x={_right2DAxis.x:F3}, y={_right2DAxis.y:F3}");
-                }
-            }
-            
-            // 检查并输出按钮状态变化的日志（ABXY按钮）
-            CheckAndLogButtonChanges();
-            
-            // 每帧发送数据到服务器
-                SendVRDataToServer();
-            
+            return new Vector3(v.x, v.y, -v.z);
         }
 
-        private void CheckAndLogButtonChanges()
+        private Quaternion ConvertQuaternion(Quaternion q)
         {
-            // 检查左手柄按钮状态变化（仅ABXY按钮）
-            if (IsActionEnabled(leftXButtonRef))
-            {
-                float currentValue = leftXButtonRef.action.ReadValue<float>();
-                bool currentlyPressed = currentValue > 0.5f;
-                if (currentlyPressed != _leftButtons[4].pressed)
-                {
-                    _leftButtons[4].pressed = currentlyPressed;
-                    _leftButtons[4].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
-                    Debug.Log($"左手X键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            if (IsActionEnabled(leftYButtonRef))
-            {
-                float currentValue = leftYButtonRef.action.ReadValue<float>();
-                bool currentlyPressed = currentValue > 0.5f;
-                if (currentlyPressed != _leftButtons[5].pressed)
-                {
-                    _leftButtons[5].pressed = currentlyPressed;
-                    _leftButtons[5].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
-                    Debug.Log($"左手Y键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            // 检查右手柄按钮状态变化（仅ABXY按钮）
-            if (IsActionEnabled(rightAButtonRef))
-            {
-                float currentValue = rightAButtonRef.action.ReadValue<float>();
-                bool currentlyPressed = currentValue > 0.5f;
-                if (currentlyPressed != _rightButtons[4].pressed)
-                {
-                    _rightButtons[4].pressed = currentlyPressed;
-                    _rightButtons[4].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
-                    Debug.Log($"右手A键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
-
-            if (IsActionEnabled(rightBButtonRef))
-            {
-                float currentValue = rightBButtonRef.action.ReadValue<float>();
-                bool currentlyPressed = currentValue > 0.5f;
-                if (currentlyPressed != _rightButtons[5].pressed)
-                {
-                    _rightButtons[5].pressed = currentlyPressed;
-                    _rightButtons[5].value = currentlyPressed ? 1f : 0f; // ABXY按钮只传0或1
-                    Debug.Log($"右手B键{(currentlyPressed ? "按下" : "释放")}");
-                }
-            }
+            return new Quaternion(-q.x, -q.y, q.z, q.w);
         }
 
-        [ContextMenu("Test Generate JSON")]
-        void TestGenerateJSON()
-            {
-                bool anyPressed = 
-                _rightButtons[4].pressed || _rightButtons[5].pressed || _rightButtons[1].pressed || _rightButtons[0].pressed ||
-                _leftButtons[1].pressed || _leftButtons[0].pressed || _leftButtons[4].pressed || _leftButtons[5].pressed;
+        #endregion
 
-                if (anyPressed)
-                {
-                    var data = new SendVRData();
+        #region 透视功能
 
-                    // Head
-                    data.head.position = new Vector3Data(GetHeadPosition());
-                    data.head.rotation = new QuaternionData(GetHeadRotation());
-                    data.head.linearVelocity = new Vector4Data(GetHeadVelocity());      // ✅ Vector4Data
-                    data.head.angularVelocity = new Vector4Data(GetHeadAngularVelocity()); // ✅
-
-                    // Left
-                    data.left.position = new Vector3Data(GetLeftPosition());
-                    data.left.rotation = new QuaternionData(GetLetfRotation());
-                    data.left.linearVelocity = new Vector4Data(GetLeftVelocity());       // ✅
-                    data.left.angularVelocity = new Vector4Data(GetLeftAngularVelocity()); // ✅
-                    
-                    // 设置左手摇杆轴数据到axes数组的后两位（索引2和3）
-                    data.left.axes[2] = _left2DAxis.x;
-                    data.left.axes[3] = _left2DAxis.y;
-
-                    // Right
-                    data.right.position = new Vector3Data(GetRightPosition());
-                    data.right.rotation = new QuaternionData(GetRightRotation());
-                    data.right.linearVelocity = new Vector4Data(GetRightVelocity());     // ✅
-                    data.right.angularVelocity = new Vector4Data(GetRightAngularVelocity()); // ✅
-                    
-                    // 设置右手摇杆轴数据到axes数组的后两位（索引2和3）
-                    data.right.axes[2] = _right2DAxis.x;
-                    data.right.axes[3] = _right2DAxis.y;
-
-                    // 深拷贝按钮状态
-                    // Left buttons
-                    data.left.button = new ButtonState[_leftButtons.Length];
-                    for (int i = 0; i < _leftButtons.Length; i++)
-                    {
-                        var src = _leftButtons[i];
-                        data.left.button[i] = new ButtonState
-                        {
-                            value = src.value,
-                            pressed = src.pressed,
-                            touched = src.touched
-                        };
-                    }
-
-                    // Right buttons
-                    data.right.button = new ButtonState[_rightButtons.Length];
-                    for (int i = 0; i < _rightButtons.Length; i++)
-                    {
-                        var src = _rightButtons[i];
-                        data.right.button[i] = new ButtonState
-                        {
-                            value = src.value,
-                            pressed = src.pressed,
-                            touched = src.touched
-                        };
-                    }
-
-                    // axes 不需要赋值，默认就是 [0,0,0,0]，除了摇杆轴数据已在上面设置
-
-                    data.timestamp = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-                    string json = JsonUtility.ToJson(data, true);
-                    Debug.Log("✅ 按钮按下中 - VR 数据:\n" + json);
-                }
-            }
-        
-        /// <summary>
-        /// 切换透视功能
-        /// </summary>
         public void ToggleSeethrough()
         {
             _isSeethroughEnabled = !_isSeethroughEnabled;
@@ -650,23 +402,67 @@ namespace DataTracking
             Debug.Log($"🔄 透视已{(_isSeethroughEnabled ? "开启" : "关闭")}");
         }
 
-        /// <summary>
-        /// 获取透视状态
-        /// </summary>
         public bool IsSeethroughEnabled()
         {
             return _isSeethroughEnabled;
         }
+
+        #endregion
+
+        #region 内部数据结构
+
+        /// <summary>
+        /// 位姿数据缓存
+        /// </summary>
+        private class PoseCache
+        {
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 velocity;
+            public Vector3 angularVelocity;
+        }
+
+        /// <summary>
+        /// 手柄数据缓存
+        /// </summary>
+        private class ControllerCache : PoseCache
+        {
+            public ButtonState[] buttons = new ButtonState[7];
+            public Vector2 joystick;
+
+            public ControllerCache()
+            {
+                for (int i = 0; i < 7; i++)
+                {
+                    buttons[i] = new ButtonState();
+                }
+            }
+        }
+
+        #endregion
     }
 
-    // 自定义证书处理程序，用于忽略SSL证书错误
+    /// <summary>
+    /// 按钮状态扩展方法
+    /// </summary>
+    public static class ButtonStateExtensions
+    {
+        public static void Set(this ButtonState btn, float value, bool pressed, bool touched)
+        {
+            btn.value = value;
+            btn.pressed = pressed;
+            btn.touched = touched;
+        }
+    }
+
+    /// <summary>
+    /// 自定义证书处理（开发环境用）
+    /// </summary>
     public class CustomCertificateHandler : UnityEngine.Networking.CertificateHandler
     {
         protected override bool ValidateCertificate(byte[] certificateData)
         {
-            // 在开发环境中忽略证书验证
-            // 注意：在生产环境中不应忽略证书验证
-            return true;
+            return true; // 仅开发环境使用
         }
     }
 }

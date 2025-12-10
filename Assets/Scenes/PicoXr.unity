@@ -503,6 +503,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1327432903}
+  - component: {fileID: 1327432904}
   m_Layer: 0
   m_Name: Transparent Floor
   m_TagString: Untagged
@@ -525,6 +526,22 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1327432904
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1327432902}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c90d6d98d33e2094196b9d771023eba0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  floorAlpha: 0
+  showGridLines: 0
+  gridLineAlpha: 0.3
+  gridLineColor: {r: 1, g: 1, b: 1, a: 1}
 --- !u!1001 &1525228630
 PrefabInstance:
   m_ObjectHideFlags: 0
