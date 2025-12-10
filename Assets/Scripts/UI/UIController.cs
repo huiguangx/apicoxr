@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -42,6 +43,13 @@ public class UIController : MonoBehaviour
     [Tooltip("服务器基础地址 (如 192.168.1.100:5000 或 localhost:5000)")]
     public string serverBaseUrl = "127.0.0.1:5000";
 
+    [Header("视频流配置")]
+    [Tooltip("视频流服务器地址 (如 localhost:3000 或 192.168.1.100:8080)")]
+    public string videoStreamBaseUrl = "localhost:3000";
+
+    [Tooltip("是否在启动时自动开启视频流")]
+    public bool autoStartVideoStream = false;  // 改为默认false，避免遮挡UI
+
     // 内部引用
     private Canvas canvas;
     private GameObject modalWindow;
@@ -69,6 +77,12 @@ public class UIController : MonoBehaviour
     private Button seethroughToggleButton;
     private Text seethroughStatusText;
 
+    // 视频流相关
+    private VideoStream.StereoVideoStreamManager videoStreamManager;
+    private InputField videoUrlInputField;
+    private Button videoToggleButton;
+    private Text videoStatusText;
+
     private void Awake()
     {
         mainCamera = Camera.main;
@@ -82,6 +96,13 @@ public class UIController : MonoBehaviour
         {
             serverBaseUrl = PlayerPrefs.GetString("ServerBaseUrl");
             Debug.Log($"📥 从 PlayerPrefs 加载服务器地址: {serverBaseUrl}");
+        }
+
+        // 从 PlayerPrefs 加载视频流地址
+        if (PlayerPrefs.HasKey("VideoStreamBaseUrl"))
+        {
+            videoStreamBaseUrl = PlayerPrefs.GetString("VideoStreamBaseUrl");
+            Debug.Log($"📥 从 PlayerPrefs 加载视频流地址: {videoStreamBaseUrl}");
         }
 
         CreateUI();
@@ -103,8 +124,49 @@ public class UIController : MonoBehaviour
         // 获取DataTracking实例
         dataTracking = FindObjectOfType<DataTracking.DataTracking>();
 
+        // 获取视频流管理器实例
+        videoStreamManager = FindObjectOfType<VideoStream.StereoVideoStreamManager>();
+        if (videoStreamManager == null)
+        {
+            Debug.LogWarning("⚠️ 未找到 StereoVideoStreamManager 组件，视频流功能将不可用");
+        }
+        else if (autoStartVideoStream)
+        {
+            // 延迟1秒后自动启动视频流
+            StartCoroutine(AutoStartVideoStreamDelayed());
+        }
+
         // 初始化输入框
         InitializeServerUrlInput();
+    }
+
+    /// <summary>
+    /// 延迟自动启动视频流
+    /// </summary>
+    private IEnumerator AutoStartVideoStreamDelayed()
+    {
+        yield return new WaitForSeconds(1f);
+
+        string leftUrl = $"http://{videoStreamBaseUrl}/left";
+        string rightUrl = $"http://{videoStreamBaseUrl}/right";
+
+        Debug.Log($"🎬 自动启动视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+
+        videoStreamManager.StartStreaming(leftUrl, rightUrl);
+
+        // 更新UI状态（如果UI已创建）
+        if (videoToggleButton != null)
+        {
+            Text btnText = videoToggleButton.GetComponentInChildren<Text>();
+            if (btnText != null)
+                btnText.text = "关闭视频流";
+        }
+
+        if (videoStatusText != null)
+        {
+            videoStatusText.text = "视频流: 连接中...";
+            videoStatusText.color = Color.yellow;
+        }
     }
 
     // 初始化服务器URL输入框
@@ -118,6 +180,9 @@ public class UIController : MonoBehaviour
 
     private void Update()
     {
+        // 更新视频流状态显示
+        UpdateVideoStreamStatus();
+
         // 检测 Canvas 参数变化
         if (canvas != null)
         {
@@ -284,6 +349,9 @@ public class UIController : MonoBehaviour
         canvas = canvasObj.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
 
+        // 设置渲染顺序，确保UI在视频流之上
+        canvas.sortingOrder = 100; // 高优先级，确保在其他元素之上
+
         // 设置 Canvas 位置（在相机前方）
         if (mainCamera != null)
         {
@@ -313,6 +381,8 @@ public class UIController : MonoBehaviour
         {
             canvasObj.AddComponent<GraphicRaycaster>();
         }
+
+        Debug.Log($"✅ UICanvas创建完成，SortingOrder={canvas.sortingOrder}，确保UI在视频流上方");
     }
 
     /// <summary>
@@ -539,6 +609,9 @@ public class UIController : MonoBehaviour
     {
         // 添加透视开关按钮（放在最上面）
         CreateSeethroughToggle();
+
+        // 添加视频流控制（紧接在透视开关之后）
+        CreateVideoStreamControls();
 
         AddButton("CONFIRM", OnConfirmClicked, new Color(0.2f, 0.6f, 1f));
         AddButton("CANCEL", OnCancelClicked, new Color(0.7f, 0.7f, 0.7f));
@@ -881,6 +954,215 @@ public class UIController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 创建视频流控制UI（输入框+开关按钮+状态）
+    /// </summary>
+    private void CreateVideoStreamControls()
+    {
+        if (buttonsContainer == null) return;
+
+        // 创建容器
+        GameObject videoContainer = new GameObject("VideoStreamContainer");
+        videoContainer.transform.SetParent(buttonsContainer, false);
+
+        RectTransform containerRect = videoContainer.AddComponent<RectTransform>();
+        containerRect.sizeDelta = new Vector2(500f, 200f);
+
+        LayoutElement layoutElement = videoContainer.AddComponent<LayoutElement>();
+        layoutElement.minHeight = 200;
+        layoutElement.preferredHeight = 200;
+        layoutElement.flexibleWidth = 1;
+
+        // 创建标题文本
+        GameObject titleObj = new GameObject("VideoStreamTitle");
+        titleObj.transform.SetParent(videoContainer.transform, false);
+
+        RectTransform titleRect = titleObj.AddComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0, 0.7f);
+        titleRect.anchorMax = new Vector2(1, 1f);
+        titleRect.pivot = new Vector2(0.5f, 0.5f);
+        titleRect.offsetMin = new Vector2(10, 0);
+        titleRect.offsetMax = new Vector2(-10, 0);
+
+        Text titleText = CreateTextComponent(titleObj, "TitleText");
+        titleText.text = "视频流设置";
+        titleText.fontSize = 28;
+        titleText.alignment = TextAnchor.MiddleLeft;
+        titleText.fontStyle = FontStyle.Bold;
+        titleText.color = new Color(0.8f, 0.8f, 0.8f, 1f);
+
+        // 创建输入框（上半部分，0.4-0.7）
+        GameObject inputFieldObj = new GameObject("VideoUrlInputField");
+        inputFieldObj.transform.SetParent(videoContainer.transform, false);
+
+        RectTransform inputRect = inputFieldObj.AddComponent<RectTransform>();
+        inputRect.anchorMin = new Vector2(0, 0.4f);
+        inputRect.anchorMax = new Vector2(0.65f, 0.7f);
+        inputRect.pivot = new Vector2(0, 0.5f);
+        inputRect.offsetMin = new Vector2(10, 0);
+        inputRect.offsetMax = new Vector2(-5, 0);
+
+        videoUrlInputField = inputFieldObj.AddComponent<InputField>();
+        videoUrlInputField.text = videoStreamBaseUrl;
+
+        Image inputBg = inputFieldObj.AddComponent<Image>();
+        inputBg.color = new Color(0.3f, 0.3f, 0.3f, 1f);
+
+        videoUrlInputField.targetGraphic = inputBg;
+        videoUrlInputField.placeholder = CreatePlaceholder("例: localhost:3000");
+
+        Text inputText = CreateTextComponent(inputFieldObj, "InputText");
+        inputText.alignment = TextAnchor.MiddleLeft;
+        inputText.fontSize = 28;
+        videoUrlInputField.textComponent = inputText;
+
+        // 创建开关按钮（上半部分，0.65-1.0）
+        GameObject toggleBtnObj = new GameObject("VideoToggleButton");
+        toggleBtnObj.transform.SetParent(videoContainer.transform, false);
+
+        RectTransform toggleRect = toggleBtnObj.AddComponent<RectTransform>();
+        toggleRect.anchorMin = new Vector2(0.65f, 0.4f);
+        toggleRect.anchorMax = new Vector2(1f, 0.7f);
+        toggleRect.pivot = new Vector2(0.5f, 0.5f);
+        toggleRect.offsetMin = new Vector2(5, 0);
+        toggleRect.offsetMax = new Vector2(-10, 0);
+
+        videoToggleButton = toggleBtnObj.AddComponent<Button>();
+
+        Image toggleBg = toggleBtnObj.AddComponent<Image>();
+        toggleBg.color = new Color(0.2f, 0.7f, 0.9f, 1f); // 青色
+        videoToggleButton.targetGraphic = toggleBg;
+
+        Text toggleText = CreateTextComponent(toggleBtnObj, "ButtonText");
+        toggleText.text = "开启视频流";
+        toggleText.fontSize = 28;
+        toggleText.alignment = TextAnchor.MiddleCenter;
+        toggleText.fontStyle = FontStyle.Bold;
+
+        videoToggleButton.onClick.AddListener(OnVideoToggleClicked);
+
+        // 创建状态文本（下半部分）
+        GameObject statusObj = new GameObject("VideoStatusText");
+        statusObj.transform.SetParent(videoContainer.transform, false);
+
+        RectTransform statusRect = statusObj.AddComponent<RectTransform>();
+        statusRect.anchorMin = new Vector2(0, 0);
+        statusRect.anchorMax = new Vector2(1, 0.4f);
+        statusRect.pivot = new Vector2(0.5f, 0.5f);
+        statusRect.offsetMin = new Vector2(10, 5);
+        statusRect.offsetMax = new Vector2(-10, -5);
+
+        // 添加背景
+        Image statusBg = statusObj.AddComponent<Image>();
+        statusBg.color = new Color(0.25f, 0.25f, 0.25f, 1f);
+
+        videoStatusText = CreateTextComponent(statusObj, "StatusText");
+        videoStatusText.fontSize = 26;
+        videoStatusText.alignment = TextAnchor.MiddleCenter;
+        videoStatusText.fontStyle = FontStyle.Bold;
+        videoStatusText.text = "视频流: 未连接";
+        videoStatusText.color = Color.gray;
+    }
+
+    /// <summary>
+    /// 视频流开关按钮点击事件
+    /// </summary>
+    private void OnVideoToggleClicked()
+    {
+        if (videoStreamManager == null)
+        {
+            Debug.LogError("❌ 未找到 StereoVideoStreamManager 组件");
+            if (videoStatusText != null)
+            {
+                videoStatusText.text = "错误: 未找到视频流管理器";
+                videoStatusText.color = Color.red;
+            }
+            return;
+        }
+
+        if (videoStreamManager.IsStreaming)
+        {
+            // 停止视频流
+            videoStreamManager.StopStreaming();
+
+            if (videoToggleButton != null)
+            {
+                Text btnText = videoToggleButton.GetComponentInChildren<Text>();
+                if (btnText != null)
+                    btnText.text = "开启视频流";
+            }
+
+            if (videoStatusText != null)
+            {
+                videoStatusText.text = "视频流: 已停止";
+                videoStatusText.color = Color.gray;
+            }
+
+            Debug.Log("🛑 视频流已停止");
+        }
+        else
+        {
+            // 保存URL
+            if (videoUrlInputField != null)
+            {
+                videoStreamBaseUrl = videoUrlInputField.text.Trim();
+
+                // 移除协议部分
+                if (videoStreamBaseUrl.StartsWith("http://"))
+                    videoStreamBaseUrl = videoStreamBaseUrl.Substring(7);
+                else if (videoStreamBaseUrl.StartsWith("https://"))
+                    videoStreamBaseUrl = videoStreamBaseUrl.Substring(8);
+
+                videoStreamBaseUrl = videoStreamBaseUrl.TrimEnd('/');
+
+                // 保存到PlayerPrefs
+                PlayerPrefs.SetString("VideoStreamBaseUrl", videoStreamBaseUrl);
+                PlayerPrefs.Save();
+
+                // 更新输入框
+                videoUrlInputField.text = videoStreamBaseUrl;
+            }
+
+            // 构建URL
+            string leftUrl = $"http://{videoStreamBaseUrl}/left";
+            string rightUrl = $"http://{videoStreamBaseUrl}/right";
+
+            Debug.Log($"🎬 启动视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+
+            // 启动视频流
+            videoStreamManager.StartStreaming(leftUrl, rightUrl);
+
+            if (videoToggleButton != null)
+            {
+                Text btnText = videoToggleButton.GetComponentInChildren<Text>();
+                if (btnText != null)
+                    btnText.text = "关闭视频流";
+            }
+
+            if (videoStatusText != null)
+            {
+                videoStatusText.text = "视频流: 连接中...";
+                videoStatusText.color = Color.yellow;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 更新视频流状态显示
+    /// </summary>
+    private void UpdateVideoStreamStatus()
+    {
+        if (videoStreamManager == null || videoStatusText == null)
+            return;
+
+        if (videoStreamManager.IsStreaming)
+        {
+            float fps = videoStreamManager.CurrentFPS;
+            videoStatusText.text = $"视频流: 运行中 ({fps:F1} FPS)";
+            videoStatusText.color = fps > 15f ? Color.green : Color.yellow;
+        }
+    }
+
     private void OnDestroy()
     {
         foreach (Button btn in buttons)
@@ -899,6 +1181,11 @@ public class UIController : MonoBehaviour
         if (seethroughToggleButton != null)
         {
             seethroughToggleButton.onClick.RemoveListener(OnToggleSeethrough);
+        }
+
+        if (videoToggleButton != null)
+        {
+            videoToggleButton.onClick.RemoveListener(OnVideoToggleClicked);
         }
     }
 }

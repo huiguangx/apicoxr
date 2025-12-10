@@ -301,6 +301,8 @@ MonoBehaviour:
   buttonSpacing: 20
   showOnStart: 1
   serverBaseUrl: 127.0.0.1:5000
+  videoStreamBaseUrl: localhost:3000
+  autoStartVideoStream: 0
 --- !u!1 &809539585
 GameObject:
   m_ObjectHideFlags: 0
@@ -347,32 +349,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8ae3031fb75ac3643848121855fa0c26, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  deviceHeadPositionRef: {fileID: 7862207684358717888, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  deviceHeadRotationRef: {fileID: -530380113134220495, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  deviceHeadVelocityRef: {fileID: 0}
-  deviceHeadAngularVelocityRef: {fileID: -8229586993289049310, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftPositionRef: {fileID: -2024308242397127297, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftRotationRef: {fileID: 8248158260566104461, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftVelocityRef: {fileID: -2908187890755949153, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftAngularVelocityRef: {fileID: 6122138801083837350, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftGripRef: {fileID: 7317339071711151110, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftXButtonRef: {fileID: 9136310051657229215, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftYButtonRef: {fileID: -3919255678098940401, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  leftTriggerRef: {fileID: 6737990389459315587, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  left2DAxisRef: {fileID: -5429271762325318506, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightPositionRef: {fileID: -3326005586356538449, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightRotationRef: {fileID: 5101698808175986029, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightVelocityRef: {fileID: -8478505237938205815, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightAngularVelocityRef: {fileID: -9086353021315807430, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightAButtonRef: {fileID: 5051323385265328969, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightBButtonRef: {fileID: 6598680733854720781, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightGripRef: {fileID: -1181991536033784932, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  rightTriggerRef: {fileID: -6466354313290683161, guid: c348712bda248c246b8c49b3db54643f, type: 3}
-  right2DAxisRef: {fileID: 6695457062204881701, guid: c348712bda248c246b8c49b3db54643f, type: 3}
+  enableDebugLog: 0
   enableWristRotationMapping: 0
   wristRotationMapper: {fileID: 0}
   serverUrl: https://127.0.0.1:5000/poseData
-  sendInterval: 0.1
 --- !u!4 &809539588
 Transform:
   m_ObjectHideFlags: 0
@@ -432,15 +412,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ffc3f841e56aac34e96de06fd4221b8d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  leftEyeUrl: http://192.168.1.10:8080/left
-  rightEyeUrl: http://192.168.1.10:8080/right
-  leftEyeImage: {fileID: 0}
-  rightEyeImage: {fileID: 0}
-  toggleButton: {fileID: 0}
-  buttonText: {fileID: 0}
-  leftStream: {fileID: 0}
-  rightStream: {fileID: 0}
-  isActive: 0
 --- !u!1 &1071228540 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 1717954561962503725, guid: f6336ac4ac8b4d34bc5072418cdc62a0, type: 3}
