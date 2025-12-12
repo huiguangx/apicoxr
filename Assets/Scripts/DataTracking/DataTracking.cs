@@ -335,9 +335,9 @@ namespace DataTracking
                 };
             }
 
-            // 摇杆
+            // 摇杆 (左手系→右手系转换)
             info.axes[2] = cache.joystick.x;
-            info.axes[3] = cache.joystick.y;
+            info.axes[3] = -cache.joystick.y;  // Y轴取反
         }
 
         private IEnumerator PostDataToServer(string jsonData)
