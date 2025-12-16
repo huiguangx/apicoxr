@@ -225,10 +225,10 @@ namespace DataTracking
             var data = BuildSendData();
 
             // 打印右手数据
-            // if (enableDebugLog)
-            // {
+            if (enableDebugLog)
+            {
                 LogControllerData("Right", data.right);
-            // }
+            }
 
             string json = JsonUtility.ToJson(data, enableDebugLog);
 
@@ -237,7 +237,7 @@ namespace DataTracking
                 Debug.Log($"✅ 发送VR数据JSON: {json}");
             }
 
-            StartCoroutine(PostDataToServer(json));
+            // StartCoroutine(PostDataToServer(json));
         }
 
         /// <summary>
