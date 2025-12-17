@@ -135,11 +135,7 @@ namespace VideoStream
         private int rightFrameCount = 0;
         private float statsTimer = 0f;
         private float currentFPS = 0f;
-        
-        // 上次处理的帧时间戳，用于更准确的FPS计算
-        private float lastLeftFrameTime = 0f;
-        private float lastRightFrameTime = 0f;
-        private const float MIN_FRAME_INTERVAL = 0.01f; // 最小帧间隔10ms，避免重复帧计入
+        private int totalReceivedFrames = 0; // 用于调试，统计接收到的总帧数
 
         #endregion
 
@@ -525,31 +521,26 @@ namespace VideoStream
         /// <param name="isLeftEye">是否为左眼</param>
         private void OnFrameReceived(byte[] frameData, bool isLeftEye)
         {
-            float currentTime = Time.time;
-            
+            // 只负责存储帧数据到缓冲区，不计数
+            // 帧率统计在UpdateTextures中进行（实际显示时才计数）
             lock (frameLock)
             {
                 if (isLeftEye)
                 {
-                    // 检查是否为新帧（避免重复计算）
-                    if (currentTime - lastLeftFrameTime >= MIN_FRAME_INTERVAL)
+                    leftFrameBuffer = frameData;
+                    leftFrameReady = true;
+
+                    // 调试日志：验证不在此处计数
+                    if (enableDebugLog && totalReceivedFrames % 30 == 0)
                     {
-                        leftFrameBuffer = frameData;
-                        leftFrameReady = true;
-                        leftFrameCount++;
-                        lastLeftFrameTime = currentTime;
+                        Debug.Log($"[StereoVideoStreamManager] OnFrameReceived: 收到第{totalReceivedFrames}帧（不计入FPS统计）");
                     }
+                    totalReceivedFrames++;
                 }
                 else
                 {
-                    // 检查是否为新帧（避免重复计算）
-                    if (currentTime - lastRightFrameTime >= MIN_FRAME_INTERVAL)
-                    {
-                        rightFrameBuffer = frameData;
-                        rightFrameReady = true;
-                        rightFrameCount++;
-                        lastRightFrameTime = currentTime;
-                    }
+                    rightFrameBuffer = frameData;
+                    rightFrameReady = true;
                 }
             }
         }
@@ -573,7 +564,7 @@ namespace VideoStream
             lock (frameLock)
             {
                 bool updated = false;
-                
+
                 // 更新左眼纹理
                 if (leftFrameReady && leftFrameBuffer != null)
                 {
@@ -581,10 +572,14 @@ namespace VideoStream
                     {
                         leftEyeTexture.LoadImage(leftFrameBuffer);
                         leftFrameReady = false;
-                        if (!useBackgroundThreadForDecoding)
+                        leftFrameCount++; // 只在实际显示时计数
+
+                        // 调试日志：验证在此处计数
+                        if (enableDebugLog && leftFrameCount % 30 == 0)
                         {
-                            leftFrameCount++; // 只在非后台解码模式下增加计数
+                            Debug.Log($"[StereoVideoStreamManager] UpdateTextures: 显示第{leftFrameCount}帧（计入FPS统计）");
                         }
+
                         updated = true;
                     }
                     catch (Exception ex)
@@ -600,10 +595,7 @@ namespace VideoStream
                     {
                         rightEyeTexture.LoadImage(rightFrameBuffer);
                         rightFrameReady = false;
-                        if (!useBackgroundThreadForDecoding)
-                        {
-                            rightFrameCount++; // 只在非后台解码模式下增加计数
-                        }
+                        rightFrameCount++; // 只在实际显示时计数
                         updated = true;
                     }
                     catch (Exception ex)
@@ -611,7 +603,7 @@ namespace VideoStream
                         Debug.LogError($"[StereoVideoStreamManager] 右眼纹理更新失败: {ex.Message}");
                     }
                 }
-                
+
                 // 如果有更新，记录更新时间
                 if (updated)
                 {
@@ -808,7 +800,11 @@ namespace VideoStream
 
                 if (enableDebugLog)
                 {
-                    Debug.Log($"[StereoVideoStreamManager] 实际FPS: {currentFPS:F1} (左:{leftFrameCount} 右:{rightFrameCount})");
+                    Debug.Log($"[StereoVideoStreamManager] ═══ 性能统计 ═══");
+                    Debug.Log($"  显示帧率: {currentFPS:F1} FPS (左:{leftFrameCount} 右:{rightFrameCount})");
+                    Debug.Log($"  Unity渲染帧率: {1f / Time.deltaTime:F1} FPS");
+                    Debug.Log($"  统计周期: {statsTimer:F3}秒");
+                    Debug.Log($"═════════════════════════════════");
                 }
 
                 // 重置计数器
