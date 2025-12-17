@@ -178,7 +178,7 @@ namespace DataTracking
             // 参数验证
             if (data == null)
             {
-                Debug.LogWarning("⚠️ 震动数据为空1");
+                Debug.LogWarning("⚠️ 震动数据为空");
                 return;
             }
 

@@ -52,6 +52,9 @@ namespace VideoStream
 
         // 日志开关
         private bool enableDebugLog = false;
+        
+        // 目标帧率（用于优化处理）
+        private int targetFrameRate = 30;
 
         #endregion
 
@@ -75,15 +78,18 @@ namespace VideoStream
         /// 构造函数：初始化缓冲区
         /// </summary>
         /// <param name="enableLog">是否启用调试日志</param>
-        public MjpegStreamHandler(bool enableLog = false) : base(new byte[BUFFER_SIZE])
+        /// <param name="targetFps">目标帧率，用于优化处理</param>
+        public MjpegStreamHandler(bool enableLog = false, int targetFps = 30) : base(new byte[BUFFER_SIZE])
         {
-            buffer = new byte[BUFFER_SIZE];
+            // 预分配最大缓冲区（4MB），避免运行时扩容触发GC卡顿
+            buffer = new byte[BUFFER_SIZE * 4];
             bufferPosition = 0;
             enableDebugLog = enableLog;
+            targetFrameRate = targetFps;
 
             if (enableDebugLog)
             {
-                Debug.Log("[MjpegStreamHandler] 初始化完成，缓冲区大小: " + BUFFER_SIZE);
+                Debug.Log($"[MjpegStreamHandler] 初始化完成，缓冲区大小: {BUFFER_SIZE * 4}（预分配），目标帧率: {targetFps}");
             }
         }
 
@@ -107,20 +113,49 @@ namespace VideoStream
                 // 检查缓冲区空间
                 if (bufferPosition + dataLength > buffer.Length)
                 {
-                    // 缓冲区空间不足，尝试清理或扩容
-                    if (!CompactBuffer())
+                    // 缓冲区空间不足，清理已处理的数据
+                    CompactBuffer();
+
+                    // 注释掉扩容逻辑，因为已经预分配了最大空间（4MB）
+                    // if (!CompactBuffer())
+                    // {
+                    //     // 如果缓冲区使用率不高，先尝试清理
+                    //     if (bufferPosition > BUFFER_SIZE * 0.5f)
+                    //     {
+                    //         CompactBuffer();
+                    //     }
+                    //
+                    //     // 如果还是不够，且未达到最大限制，则扩大缓冲区
+                    //     if (bufferPosition + dataLength > buffer.Length && buffer.Length < BUFFER_SIZE * 4)
+                    //     {
+                    //         ResizeBuffer(Math.Min(buffer.Length * 2, BUFFER_SIZE * 4));
+                    //     }
+                    // }
+                }
+
+                // 检查扩容后是否仍有足够空间
+                if (bufferPosition + dataLength > buffer.Length)
+                {
+                    // 空间仍然不足，丢弃部分旧数据以腾出空间
+                    int bytesToDrop = (bufferPosition + dataLength) - buffer.Length;
+                    if (bytesToDrop < bufferPosition)
                     {
-                        // 无法清理，扩大缓冲区
-                        ResizeBuffer(buffer.Length * 2);
+                        ShiftBuffer(bytesToDrop);
                     }
                 }
 
                 // 将新数据添加到缓冲区
-                Array.Copy(data, 0, buffer, bufferPosition, dataLength);
-                bufferPosition += dataLength;
+                Array.Copy(data, 0, buffer, bufferPosition, Math.Min(dataLength, buffer.Length - bufferPosition));
+                bufferPosition += Math.Min(dataLength, buffer.Length - bufferPosition);
 
                 // 解析缓冲区，提取完整的JPEG帧
                 ParseBuffer();
+
+                // 减少日志输出频率，避免影响性能
+                if (enableDebugLog && totalFrames % 300 == 0) // 每300帧输出一次日志
+                {
+                    Debug.Log($"[MjpegStreamHandler] 已接收 {totalFrames} 帧，{totalBytes} 字节，缓冲区使用: {bufferPosition}/{buffer.Length}");
+                }
 
                 return true; // 继续接收数据
             }
@@ -168,9 +203,12 @@ namespace VideoStream
         private void ParseBuffer()
         {
             int searchStart = 0;
+            int processedFrames = 0;
+            // 根据目标帧率调整每次处理的帧数，避免阻塞主线程
+            int maxFramesPerCall = Mathf.Clamp(targetFrameRate / 10, 2, 10);
 
             // 循环查找所有完整的JPEG帧
-            while (searchStart < bufferPosition)
+            while (searchStart < bufferPosition && processedFrames < maxFramesPerCall)
             {
                 // 1. 查找JPEG起始标记 (0xFF 0xD8)
                 int jpegStartIndex = FindPattern(buffer, JPEG_START, searchStart, bufferPosition);
@@ -201,15 +239,29 @@ namespace VideoStream
 
                 // 4. 触发帧接收事件
                 EmitFrame(frame);
+                processedFrames++;
 
                 // 5. 更新搜索起点（跳过已处理的帧）
                 searchStart = jpegEndIndex + 2;
+                
+                // 如果处理的数据过多，强制清理缓冲区以防止内存无限增长
+                if (searchStart > 100000) // 100KB阈值
+                {
+                    ShiftBuffer(searchStart);
+                    searchStart = 0;
+                }
             }
 
             // 移除已处理的数据
             if (searchStart > 0)
             {
                 ShiftBuffer(searchStart);
+            }
+            
+            // 如果缓冲区过大，强制清理
+            if (bufferPosition > BUFFER_SIZE * 0.8f) 
+            {
+                CompactBuffer();
             }
         }
 

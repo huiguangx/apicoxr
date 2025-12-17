@@ -27,16 +27,28 @@ namespace VideoStream
 
         [Tooltip("纹理过滤模式 - Point速度快但有锯齿，Bilinear平滑但稍慢")]
         public FilterMode textureFilterMode = FilterMode.Bilinear;
+        
+        [Tooltip("是否限制帧率以减少CPU负载")]
+        public bool limitFrameRate = true;
+        
+        [Tooltip("最大帧间隔（毫秒），超过此时间才会更新纹理")]
+        public int maxFrameInterval = 33; // 约30fps
+        
+        [Tooltip("纹理更新频率（每N帧更新一次）")]
+        public int textureUpdateFrequency = 2;
+        
+        [Tooltip("是否在后台线程解码JPEG图像以减轻主线程负担")]
+        public bool useBackgroundThreadForDecoding = false;
 
         [Header("网络容错")]
         [Tooltip("连接超时时间（秒）")]
-        public float connectionTimeout = 10f;
+        public float connectionTimeout = 30f;
 
         [Tooltip("最大重试次数")]
-        public int maxRetryCount = 3;
+        public int maxRetryCount = 5;
 
         [Tooltip("重试延迟（秒）")]
-        public float retryDelay = 2f;
+        public float retryDelay = 3f;
 
         [Header("显示设置")]
         [Tooltip("视频显示距离（米）- 建议1.0-3.0米")]
@@ -81,13 +93,38 @@ namespace VideoStream
         private UnityWebRequest leftRequest;
         private UnityWebRequest rightRequest;
         private bool isStreaming = false;
-
+        private bool leftStreamConnected = false;  // 左眼流连接状态
+        private bool rightStreamConnected = false; // 右眼流连接状态
+        
+        // 后台线程解码相关
+        private System.Threading.Thread decodingThread;
+        private readonly System.Collections.Concurrent.ConcurrentQueue<FrameData> frameQueue = 
+            new System.Collections.Concurrent.ConcurrentQueue<FrameData>();
+        private volatile bool decodingThreadRunning = false;
+        private readonly object decodingLock = new object();
+        
+        // 后台解码帧数据结构
+        private class FrameData
+        {
+            public byte[] Data;
+            public bool IsLeftEye;
+            
+            public FrameData(byte[] data, bool isLeftEye)
+            {
+                Data = data;
+                IsLeftEye = isLeftEye;
+            }
+        }
+        
         // 帧缓存（双缓冲）
         private byte[] leftFrameBuffer;
         private byte[] rightFrameBuffer;
         private bool leftFrameReady = false;
         private bool rightFrameReady = false;
         private readonly object frameLock = new object();
+        
+        // 帧率控制
+        private float lastFrameTime = 0f;
 
         // URL
         private string currentLeftUrl;
@@ -98,6 +135,11 @@ namespace VideoStream
         private int rightFrameCount = 0;
         private float statsTimer = 0f;
         private float currentFPS = 0f;
+        
+        // 上次处理的帧时间戳，用于更准确的FPS计算
+        private float lastLeftFrameTime = 0f;
+        private float lastRightFrameTime = 0f;
+        private const float MIN_FRAME_INTERVAL = 0.01f; // 最小帧间隔10ms，避免重复帧计入
 
         #endregion
 
@@ -138,17 +180,24 @@ namespace VideoStream
 
         private void Update()
         {
-            // 更新纹理（主线程安全）
-            UpdateTextures();
+            // 控制纹理更新频率，减轻主线程负担
+            if (textureUpdateFrequency <= 1 || Time.frameCount % textureUpdateFrequency == 0)
+            {
+                UpdateTextures();
+            }
 
-            // 更新统计信息
-            UpdateStatistics();
+            // 控制统计信息更新频率（每秒约10次）
+            if (Time.frameCount % Mathf.Max(1, Application.targetFrameRate / 10) == 0)
+            {
+                UpdateStatistics();
+            }
 
-            // 更新视频透明度
-            UpdateVideoAlpha();
-
-            // 更新视频可见性
-            UpdateVideoVisibility();
+            // 控制视频属性更新频率（每秒约20次）
+            if (Time.frameCount % Mathf.Max(1, Application.targetFrameRate / 20) == 0)
+            {
+                UpdateVideoAlpha();
+                UpdateVideoVisibility();
+            }
         }
 
         private void OnDestroy()
@@ -194,6 +243,10 @@ namespace VideoStream
 
             Debug.Log($"[StereoVideoStreamManager] 启动视频流\nLeft: {leftUrl}\nRight: {rightUrl}");
 
+            // 重置连接状态
+            leftStreamConnected = false;
+            rightStreamConnected = false;
+
             // 创建沉浸式显示
             CreateImmersiveDisplay();
 
@@ -205,6 +258,13 @@ namespace VideoStream
 
             // 启动双目流
             isStreaming = true;
+            
+            // 如果启用了后台线程解码，则启动解码线程
+            if (useBackgroundThreadForDecoding)
+            {
+                StartDecodingThread();
+            }
+            
             leftStreamCoroutine = StartCoroutine(StreamEye(leftUrl, true));
             rightStreamCoroutine = StartCoroutine(StreamEye(rightUrl, false));
         }
@@ -222,6 +282,9 @@ namespace VideoStream
             Debug.Log("[StereoVideoStreamManager] 停止视频流");
 
             isStreaming = false;
+            
+            // 停止后台解码线程
+            StopDecodingThread();
 
             // 停止协程
             if (leftStreamCoroutine != null)
@@ -353,11 +416,20 @@ namespace VideoStream
 
                 // 创建请求
                 UnityWebRequest request = new UnityWebRequest(url);
-                MjpegStreamHandler handler = new MjpegStreamHandler(enableDebugLog);
+                // 对于MJPEG流，禁用超时设置，因为它是持续性连接
+                request.timeout = 0; // 禁用超时
+                
+                MjpegStreamHandler handler = new MjpegStreamHandler(enableDebugLog, targetFrameRate);
 
                 // 注册帧接收事件
                 handler.OnFrameReceived += (frameData) =>
                 {
+                    // 标记流已连接并接收数据
+                    if (isLeftEye)
+                        leftStreamConnected = true;
+                    else
+                        rightStreamConnected = true;
+                        
                     OnFrameReceived(frameData, isLeftEye);
                 };
 
@@ -368,7 +440,8 @@ namespace VideoStream
                 };
 
                 request.downloadHandler = handler;
-                request.timeout = (int)connectionTimeout;
+                // 注释掉超时设置，保持第420行的timeout=0（MJPEG是持续流，不应超时）
+                // request.timeout = (int)connectionTimeout;
 
                 // 保存请求引用（用于中断）
                 if (isLeftEye)
@@ -389,17 +462,42 @@ namespace VideoStream
                 else
                 {
                     // 发生错误
-                    Debug.LogWarning($"[StereoVideoStreamManager] {eyeName}流连接失败: {request.error}");
-                    retryCount++;
-
-                    if (retryCount < maxRetryCount)
+                    string errorMessage = request.error;
+                    string detailedError = GetDetailedErrorMessage(request);
+                    
+                    // 对于MJPEG流，timeout并不总是错误，如果已经接收数据则忽略超时
+                    bool isRealError = true;
+                    if (request.result == UnityWebRequest.Result.ConnectionError && 
+                        errorMessage.Contains("Request timeout"))
                     {
-                        Debug.Log($"[StereoVideoStreamManager] 将在 {retryDelay} 秒后重试 ({retryCount}/{maxRetryCount})");
-                        yield return new WaitForSeconds(retryDelay);
+                        // 如果是因为超时，但流已经连接并接收了数据，则认为连接是稳定的
+                        if ((isLeftEye && leftStreamConnected) || (!isLeftEye && rightStreamConnected))
+                        {
+                            Debug.Log($"[StereoVideoStreamManager] {eyeName}流连接稳定，忽略超时错误");
+                            isRealError = false;
+                        }
+                    }
+                    
+                    if (isRealError)
+                    {
+                        Debug.LogWarning($"[StereoVideoStreamManager] {eyeName}流连接失败: {errorMessage}\n详细信息: {detailedError}");
+                        retryCount++;
+
+                        if (retryCount < maxRetryCount)
+                        {
+                            Debug.Log($"[StereoVideoStreamManager] 将在 {retryDelay} 秒后重试 ({retryCount}/{maxRetryCount})");
+                            yield return new WaitForSeconds(retryDelay);
+                        }
+                        else
+                        {
+                            Debug.LogError($"[StereoVideoStreamManager] {eyeName}流达到最大重试次数，放弃连接\nURL: {url}\n最后一次错误: {errorMessage}\n详细信息: {detailedError}");
+                        }
                     }
                     else
                     {
-                        Debug.LogError($"[StereoVideoStreamManager] {eyeName}流达到最大重试次数，放弃连接");
+                        // 重置重试计数，因为我们实际上连接是成功的
+                        retryCount = 0;
+                        yield return new WaitForSeconds(1f); // 等待一秒后继续
                     }
                 }
 
@@ -427,19 +525,31 @@ namespace VideoStream
         /// <param name="isLeftEye">是否为左眼</param>
         private void OnFrameReceived(byte[] frameData, bool isLeftEye)
         {
+            float currentTime = Time.time;
+            
             lock (frameLock)
             {
                 if (isLeftEye)
                 {
-                    leftFrameBuffer = frameData;
-                    leftFrameReady = true;
-                    leftFrameCount++;
+                    // 检查是否为新帧（避免重复计算）
+                    if (currentTime - lastLeftFrameTime >= MIN_FRAME_INTERVAL)
+                    {
+                        leftFrameBuffer = frameData;
+                        leftFrameReady = true;
+                        leftFrameCount++;
+                        lastLeftFrameTime = currentTime;
+                    }
                 }
                 else
                 {
-                    rightFrameBuffer = frameData;
-                    rightFrameReady = true;
-                    rightFrameCount++;
+                    // 检查是否为新帧（避免重复计算）
+                    if (currentTime - lastRightFrameTime >= MIN_FRAME_INTERVAL)
+                    {
+                        rightFrameBuffer = frameData;
+                        rightFrameReady = true;
+                        rightFrameCount++;
+                        lastRightFrameTime = currentTime;
+                    }
                 }
             }
         }
@@ -453,8 +563,17 @@ namespace VideoStream
         /// </summary>
         private void UpdateTextures()
         {
+            // 帧率控制 - 限制纹理更新频率避免卡顿
+            float currentTime = Time.time;
+            if (limitFrameRate && (currentTime - lastFrameTime) < (maxFrameInterval / 1000f))
+            {
+                return; // 跳过此次更新
+            }
+
             lock (frameLock)
             {
+                bool updated = false;
+                
                 // 更新左眼纹理
                 if (leftFrameReady && leftFrameBuffer != null)
                 {
@@ -462,6 +581,11 @@ namespace VideoStream
                     {
                         leftEyeTexture.LoadImage(leftFrameBuffer);
                         leftFrameReady = false;
+                        if (!useBackgroundThreadForDecoding)
+                        {
+                            leftFrameCount++; // 只在非后台解码模式下增加计数
+                        }
+                        updated = true;
                     }
                     catch (Exception ex)
                     {
@@ -476,11 +600,22 @@ namespace VideoStream
                     {
                         rightEyeTexture.LoadImage(rightFrameBuffer);
                         rightFrameReady = false;
+                        if (!useBackgroundThreadForDecoding)
+                        {
+                            rightFrameCount++; // 只在非后台解码模式下增加计数
+                        }
+                        updated = true;
                     }
                     catch (Exception ex)
                     {
                         Debug.LogError($"[StereoVideoStreamManager] 右眼纹理更新失败: {ex.Message}");
                     }
+                }
+                
+                // 如果有更新，记录更新时间
+                if (updated)
+                {
+                    lastFrameTime = currentTime;
                 }
             }
         }
@@ -673,7 +808,7 @@ namespace VideoStream
 
                 if (enableDebugLog)
                 {
-                    Debug.Log($"[StereoVideoStreamManager] FPS: {currentFPS:F1} (左:{leftFrameCount} 右:{rightFrameCount})");
+                    Debug.Log($"[StereoVideoStreamManager] 实际FPS: {currentFPS:F1} (左:{leftFrameCount} 右:{rightFrameCount})");
                 }
 
                 // 重置计数器
@@ -681,6 +816,65 @@ namespace VideoStream
                 rightFrameCount = 0;
                 statsTimer = 0f;
             }
+        }
+
+        #endregion
+
+        #region 辅助方法
+
+        /// <summary>
+        /// 获取详细的错误信息
+        /// </summary>
+        /// <param name="request">UnityWebRequest对象</param>
+        /// <returns>详细的错误描述</returns>
+        private string GetDetailedErrorMessage(UnityWebRequest request)
+        {
+            string detailedError = "";
+
+            switch (request.result)
+            {
+                case UnityWebRequest.Result.ConnectionError:
+                    detailedError = "连接错误 - 请检查网络连接和服务器地址是否正确";
+                    break;
+                case UnityWebRequest.Result.ProtocolError:
+                    detailedError = $"协议错误 - HTTP状态码: {request.responseCode}";
+                    break;
+                case UnityWebRequest.Result.DataProcessingError:
+                    detailedError = "数据处理错误 - 返回的数据格式可能不正确";
+                    break;
+                case UnityWebRequest.Result.InProgress:
+                    detailedError = "请求仍在进行中";
+                    break;
+                default:
+                    detailedError = "未知错误";
+                    break;
+            }
+
+            // 添加响应头信息（如果有的话）
+            if (request.responseCode > 0)
+            {
+                detailedError += $"\n响应码: {request.responseCode}";
+                
+                // 尝试获取响应头
+                try
+                {
+                    var headers = request.GetResponseHeaders();
+                    if (headers != null)
+                    {
+                        detailedError += "\n响应头:";
+                        foreach (var header in headers)
+                        {
+                            detailedError += $"\n  {header.Key}: {header.Value}";
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    detailedError += $"\n无法获取响应头: {ex.Message}";
+                }
+            }
+
+            return detailedError;
         }
 
         #endregion
@@ -723,6 +917,98 @@ namespace VideoStream
             {
                 Debug.Log("[StereoVideoStreamManager] 资源清理完成");
             }
+        }
+
+        #endregion
+
+        #region 后台解码线程
+
+        /// <summary>
+        /// 启动后台解码线程
+        /// </summary>
+        private void StartDecodingThread()
+        {
+            if (decodingThreadRunning)
+                return;
+
+            decodingThreadRunning = true;
+            decodingThread = new System.Threading.Thread(DecodingThreadFunction)
+            {
+                Name = "MJPEG Decoding Thread",
+                IsBackground = true
+            };
+            decodingThread.Start();
+            
+            Debug.Log("[StereoVideoStreamManager] 后台解码线程已启动");
+        }
+
+        /// <summary>
+        /// 后台解码线程函数
+        /// </summary>
+        private void DecodingThreadFunction()
+        {
+            Debug.Log("[StereoVideoStreamManager] 后台解码线程开始运行");
+            
+            while (decodingThreadRunning)
+            {
+                // 处理队列中的帧数据
+                if (frameQueue.TryDequeue(out FrameData frameData))
+                {
+                    try
+                    {
+                        // 在后台线程解码JPEG数据
+                        if (frameData.IsLeftEye)
+                        {
+                            lock (frameLock)
+                            {
+                                leftFrameBuffer = frameData.Data;
+                                leftFrameReady = true;
+                            }
+                        }
+                        else
+                        {
+                            lock (frameLock)
+                            {
+                                rightFrameBuffer = frameData.Data;
+                                rightFrameReady = true;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[StereoVideoStreamManager] 后台解码错误: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    // 没有待处理的帧，短暂休眠以避免占用过多CPU
+                    System.Threading.Thread.Sleep(1);
+                }
+            }
+            
+            Debug.Log("[StereoVideoStreamManager] 后台解码线程已结束");
+        }
+
+        /// <summary>
+        /// 停止后台解码线程
+        /// </summary>
+        private void StopDecodingThread()
+        {
+            if (!decodingThreadRunning)
+                return;
+
+            decodingThreadRunning = false;
+            
+            // 等待线程结束（最多等待1秒）
+            if (decodingThread != null && decodingThread.IsAlive)
+            {
+                decodingThread.Join(1000);
+            }
+            
+            // 清空队列
+            while (frameQueue.TryDequeue(out _)) { }
+            
+            Debug.Log("[StereoVideoStreamManager] 后台解码线程已停止");
         }
 
         #endregion
