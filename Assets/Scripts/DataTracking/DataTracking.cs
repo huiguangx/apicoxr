@@ -237,7 +237,7 @@ namespace DataTracking
                 Debug.Log($"✅ 发送VR数据JSON: {json}");
             }
 
-            // StartCoroutine(PostDataToServer(json));
+            StartCoroutine(PostDataToServer(json));
         }
 
         /// <summary>

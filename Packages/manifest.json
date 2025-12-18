@@ -9,7 +9,7 @@
     "com.unity.visualscripting": "1.9.4",
     "com.unity.xr.interaction.toolkit": "3.3.0",
     "com.unity.xr.openxr": "1.14.3",
-    "com.unity.xr.picoxr": "file:C:/work_project/pico_project/app/picoxr/PICO Unity Integration SDK-3.3.2-20251111",
+    "com.unity.xr.picoxr": "file:../PICO Unity Integration SDK-3.3.2-20251111",
     "com.unity.modules.ai": "1.0.0",
     "com.unity.modules.androidjni": "1.0.0",
     "com.unity.modules.animation": "1.0.0",
