@@ -45,7 +45,11 @@ public class UIController : MonoBehaviour
 
     [Header("视频流配置")]
     [Tooltip("视频流服务器地址 (如 localhost:3000 或 192.168.1.100:8080)")]
-    public string videoStreamBaseUrl = "localhost:3000";
+    public string videoStreamBaseUrl = "localhost:5000";
+
+    [Tooltip("视频流类型")]
+    // public VideoStreamType videoStreamType = VideoStreamType.MJPEG;
+    public VideoStreamType videoStreamType = VideoStreamType.WebRTC;
 
     [Tooltip("是否在启动时自动开启视频流")]
     public bool autoStartVideoStream = false;  // 改为默认false，避免遮挡UI
@@ -79,9 +83,12 @@ public class UIController : MonoBehaviour
 
     // 视频流相关
     private VideoStream.StereoVideoStreamManager videoStreamManager;
+    private VideoStream.StereoWebRTCStreamManager webRTCStreamManager;
     private InputField videoUrlInputField;
     private Button videoToggleButton;
     private Text videoStatusText;
+    private Button streamTypeToggleButton;
+    private Text streamTypeText;
 
     private void Awake()
     {
@@ -106,7 +113,8 @@ public class UIController : MonoBehaviour
         }
 
         CreateUI();
-
+        // 强制设置为WebRTC
+        videoStreamType = VideoStreamType.MJPEG;
         // 初始化参数缓存
         lastCanvasWidth = canvasWidth;
         lastCanvasHeight = canvasHeight;
@@ -124,13 +132,22 @@ public class UIController : MonoBehaviour
         // 获取DataTracking实例
         dataTracking = FindObjectOfType<DataTracking.DataTracking>();
 
-        // 获取视频流管理器实例
+        // 获取视频流管理器实例（MJPEG）
         videoStreamManager = FindObjectOfType<VideoStream.StereoVideoStreamManager>();
         if (videoStreamManager == null)
         {
-            Debug.LogWarning("⚠️ 未找到 StereoVideoStreamManager 组件，视频流功能将不可用");
+            Debug.LogWarning("⚠️ 未找到 StereoVideoStreamManager 组件，MJPEG视频流功能将不可用");
         }
-        else if (autoStartVideoStream)
+
+        // 获取WebRTC流管理器实例
+        webRTCStreamManager = FindObjectOfType<VideoStream.StereoWebRTCStreamManager>();
+        if (webRTCStreamManager == null)
+        {
+            Debug.LogWarning("⚠️ 未找到 StereoWebRTCStreamManager 组件，WebRTC视频流功能将不可用");
+        }
+
+        // 自动启动视频流
+        if (autoStartVideoStream)
         {
             // 延迟1秒后自动启动视频流
             StartCoroutine(AutoStartVideoStreamDelayed());
@@ -146,13 +163,28 @@ public class UIController : MonoBehaviour
     private IEnumerator AutoStartVideoStreamDelayed()
     {
         yield return new WaitForSeconds(1f);
+        if (videoStreamType == VideoStreamType.MJPEG)
+        {
+            string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg/left";
+            string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg/right";
 
-        string leftUrl = $"http://{videoStreamBaseUrl}/left";
-        string rightUrl = $"http://{videoStreamBaseUrl}/right";
+            Debug.Log($"🎬 自动启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
 
-        Debug.Log($"🎬 自动启动视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+            if (videoStreamManager != null)
+            {
+                videoStreamManager.StartStreaming(leftUrl, rightUrl);
+            }
+        }
+        else if (videoStreamType == VideoStreamType.WebRTC)
+        {
+            Debug.Log($"🎬 自动启动WebRTC视频流\n   服务器: https://{videoStreamBaseUrl}");
 
-        videoStreamManager.StartStreaming(leftUrl, rightUrl);
+            if (webRTCStreamManager != null)
+            {
+                webRTCStreamManager.serverUrl = $"https://{videoStreamBaseUrl}";
+                webRTCStreamManager.StartStreaming();
+            }
+        }
 
         // 更新UI状态（如果UI已创建）
         if (videoToggleButton != null)
@@ -164,7 +196,7 @@ public class UIController : MonoBehaviour
 
         if (videoStatusText != null)
         {
-            videoStatusText.text = "视频流: 连接中...";
+            videoStatusText.text = $"视频流 ({videoStreamType}): 连接中...";
             videoStatusText.color = Color.yellow;
         }
     }
@@ -1009,7 +1041,7 @@ public class UIController : MonoBehaviour
         inputBg.color = new Color(0.3f, 0.3f, 0.3f, 1f);
 
         videoUrlInputField.targetGraphic = inputBg;
-        videoUrlInputField.placeholder = CreatePlaceholder("例: localhost:3000");
+        videoUrlInputField.placeholder = CreatePlaceholder("例: localhost:5000");
 
         Text inputText = CreateTextComponent(inputFieldObj, "InputText");
         inputText.alignment = TextAnchor.MiddleLeft;
@@ -1069,21 +1101,49 @@ public class UIController : MonoBehaviour
     /// </summary>
     private void OnVideoToggleClicked()
     {
-        if (videoStreamManager == null)
+        bool isCurrentlyStreaming = false;
+
+        // 检查当前流类型的管理器是否正在流式传输
+        if (videoStreamType == VideoStreamType.MJPEG)
         {
-            Debug.LogError("❌ 未找到 StereoVideoStreamManager 组件");
-            if (videoStatusText != null)
+            if (videoStreamManager == null)
             {
-                videoStatusText.text = "错误: 未找到视频流管理器";
-                videoStatusText.color = Color.red;
+                Debug.LogError("❌ 未找到 StereoVideoStreamManager 组件");
+                if (videoStatusText != null)
+                {
+                    videoStatusText.text = "错误: 未找到MJPEG视频流管理器";
+                    videoStatusText.color = Color.red;
+                }
+                return;
             }
-            return;
+            isCurrentlyStreaming = videoStreamManager.IsStreaming;
+        }
+        else if (videoStreamType == VideoStreamType.WebRTC)
+        {
+            if (webRTCStreamManager == null)
+            {
+                Debug.LogError("❌ 未找到 StereoWebRTCStreamManager 组件");
+                if (videoStatusText != null)
+                {
+                    videoStatusText.text = "错误: 未找到WebRTC视频流管理器";
+                    videoStatusText.color = Color.red;
+                }
+                return;
+            }
+            isCurrentlyStreaming = webRTCStreamManager.IsStreaming;
         }
 
-        if (videoStreamManager.IsStreaming)
+        if (isCurrentlyStreaming)
         {
             // 停止视频流
-            videoStreamManager.StopStreaming();
+            if (videoStreamType == VideoStreamType.MJPEG && videoStreamManager != null)
+            {
+                videoStreamManager.StopStreaming();
+            }
+            else if (videoStreamType == VideoStreamType.WebRTC && webRTCStreamManager != null)
+            {
+                webRTCStreamManager.StopStreaming();
+            }
 
             if (videoToggleButton != null)
             {
@@ -1094,11 +1154,11 @@ public class UIController : MonoBehaviour
 
             if (videoStatusText != null)
             {
-                videoStatusText.text = "视频流: 已停止";
+                videoStatusText.text = $"视频流 ({videoStreamType}): 已停止";
                 videoStatusText.color = Color.gray;
             }
 
-            Debug.Log("🛑 视频流已停止");
+            Debug.Log($"🛑 {videoStreamType}视频流已停止");
         }
         else
         {
@@ -1123,14 +1183,32 @@ public class UIController : MonoBehaviour
                 videoUrlInputField.text = videoStreamBaseUrl;
             }
 
-            // 构建URL
-            string leftUrl = $"http://{videoStreamBaseUrl}/left";
-            string rightUrl = $"http://{videoStreamBaseUrl}/right";
+            // 启动对应类型的视频流
+            if (videoStreamType == VideoStreamType.MJPEG)
+            {
+                // 构建MJPEG URL
+                string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg/left";
+                string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg/right";
 
-            Debug.Log($"🎬 启动视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+                Debug.Log($"🎬 启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
 
-            // 启动视频流
-            videoStreamManager.StartStreaming(leftUrl, rightUrl);
+                // 启动视频流
+                if (videoStreamManager != null)
+                {
+                    videoStreamManager.StartStreaming(leftUrl, rightUrl);
+                }
+            }
+            else if (videoStreamType == VideoStreamType.WebRTC)
+            {
+                Debug.Log($"🎬 启动WebRTC视频流\n   服务器: https://{videoStreamBaseUrl}");
+
+                // 启动WebRTC流
+                if (webRTCStreamManager != null)
+                {
+                    webRTCStreamManager.serverUrl = $"https://{videoStreamBaseUrl}";
+                    webRTCStreamManager.StartStreaming();
+                }
+            }
 
             if (videoToggleButton != null)
             {
@@ -1141,7 +1219,7 @@ public class UIController : MonoBehaviour
 
             if (videoStatusText != null)
             {
-                videoStatusText.text = "视频流: 连接中...";
+                videoStatusText.text = $"视频流 ({videoStreamType}): 连接中...";
                 videoStatusText.color = Color.yellow;
             }
         }
@@ -1188,4 +1266,13 @@ public class UIController : MonoBehaviour
             videoToggleButton.onClick.RemoveListener(OnVideoToggleClicked);
         }
     }
+}
+
+/// <summary>
+/// 视频流类型枚举
+/// </summary>
+public enum VideoStreamType
+{
+    MJPEG,   // MJPEG流（HTTP multipart）
+    WebRTC   // WebRTC流（P2P实时通信）
 }

@@ -288,7 +288,7 @@ MonoBehaviour:
   buttonSpacing: 20
   showOnStart: 0
   serverBaseUrl: 127.0.0.1:5000
-  videoStreamBaseUrl: localhost:3000
+  videoStreamBaseUrl: localhost:5000
   autoStartVideoStream: 1
 --- !u!1 &809539585
 GameObject:
