@@ -1,5 +1,7 @@
 using UnityEngine;
-using System.Collections;
+using System.Collections.Concurrent;
+using System.Net.Http;
+using System.Threading;
 using Unity.XR.PXR;
 using UnityEngine.XR;
 
@@ -8,6 +10,7 @@ namespace DataTracking
     /// <summary>
     /// XR设备位姿数据采集与发送
     /// 自动采集头显和手柄数据，发送到服务器
+    /// 使用生产者-消费者模式：Update采集数据入队，独立线程发送HTTP请求
     /// </summary>
     public class DataTracking : MonoBehaviour
     {
@@ -21,7 +24,9 @@ namespace DataTracking
         public WristRotationMapper wristRotationMapper;
 
         [Header("网络设置")]
-        [SerializeField] private string serverUrl = "https://127.0.0.1:5000/poseData";
+        [SerializeField] private string serverUrl = "https://localhost:5000/poseData";
+        [Tooltip("发送队列最大容量（帧数）")]
+        [SerializeField] private int queueMaxSize = 10;
 
         // XR设备引用
         private InputDevice headDevice;
@@ -38,6 +43,13 @@ namespace DataTracking
         private float _lastSendTime = -1f;
         private int _sendCounter = 0;
 
+        // 生产者-消费者队列系统
+        private ConcurrentQueue<string> sendQueue;
+        private Thread sendThread;
+        private volatile bool isRunning = false;
+        private HttpClient httpClient;
+        private int droppedFrames = 0;
+
         #region Unity生命周期
 
         private void Awake()
@@ -52,12 +64,18 @@ namespace DataTracking
             {
                 Debug.LogWarning("⚠️ 未找到 UIController，将使用默认 serverUrl");
             }
+
+            // 初始化生产者-消费者系统
+            InitializeSendThread();
         }
 
         private void OnDestroy()
         {
             InputDevices.deviceConnected -= OnDeviceConnected;
             InputDevices.deviceDisconnected -= OnDeviceDisconnected;
+
+            // 停止发送线程
+            StopSendThread();
         }
 
         private void Update()
@@ -218,7 +236,7 @@ namespace DataTracking
             if (_lastSendTime >= 0 && enableDebugLog)
             {
                 float interval = currentTime - _lastSendTime;
-                Debug.Log($"[HTTP发送] #{_sendCounter}: 间隔={interval:F4}s, 频率={(1f/interval):F1}Hz");
+                Debug.Log($"[入队] #{_sendCounter}: 间隔={interval:F4}s, 频率={(1f/interval):F1}Hz");
             }
             _lastSendTime = currentTime;
 
@@ -232,12 +250,33 @@ namespace DataTracking
 
             string json = JsonUtility.ToJson(data, enableDebugLog);
 
-            if (enableDebugLog)
+            // 生产者：数据入队
+            EnqueueData(json);
+        }
+
+        /// <summary>
+        /// 生产者：将数据加入发送队列
+        /// </summary>
+        private void EnqueueData(string json)
+        {
+            if (sendQueue.Count >= queueMaxSize)
             {
-                Debug.Log($"✅ 发送VR数据JSON: {json}");
+                // 队列满，丢弃最旧的数据（保持实时性）
+                sendQueue.TryDequeue(out _);
+                droppedFrames++;
+
+                if (enableDebugLog)
+                {
+                    Debug.LogWarning($"⚠️ 队列已满({queueMaxSize})，丢弃最旧数据，累计丢弃:{droppedFrames}帧");
+                }
             }
 
-            StartCoroutine(PostDataToServer(json));
+            sendQueue.Enqueue(json);
+
+            if (enableDebugLog)
+            {
+                Debug.Log($"✅ 数据已入队，队列长度: {sendQueue.Count}/{queueMaxSize}");
+            }
         }
 
         /// <summary>
@@ -340,41 +379,141 @@ namespace DataTracking
             info.axes[3] = -cache.joystick.y;  // Y轴取反
         }
 
-        private IEnumerator PostDataToServer(string jsonData)
+        /// <summary>
+        /// 初始化发送线程系统
+        /// </summary>
+        private void InitializeSendThread()
         {
-            string url = uiController != null
-                ? "https://localhost:5000/poseData"
-                : serverUrl;
+            sendQueue = new ConcurrentQueue<string>();
 
-            if (string.IsNullOrEmpty(url))
+            // 配置 HttpClient（线程安全）
+            var handler = new HttpClientHandler
             {
-                Debug.LogError("❌ 服务器URL为空");
-                yield break;
+                ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true // 仅开发环境
+            };
+            httpClient = new HttpClient(handler)
+            {
+                Timeout = System.TimeSpan.FromSeconds(2)
+            };
+
+            // 启动发送线程
+            isRunning = true;
+            sendThread = new Thread(SendThreadLoop)
+            {
+                IsBackground = true,
+                Name = "VR Data Send Thread"
+            };
+            sendThread.Start();
+
+            if (enableDebugLog)
+            {
+                Debug.Log("✅ 发送线程已启动");
+            }
+        }
+
+        /// <summary>
+        /// 停止发送线程
+        /// </summary>
+        private void StopSendThread()
+        {
+            if (sendThread != null && sendThread.IsAlive)
+            {
+                isRunning = false;
+
+                // 等待线程结束（最多1秒）
+                if (!sendThread.Join(1000))
+                {
+                    Debug.LogWarning("⚠️ 发送线程未能在1秒内停止");
+                }
+
+                if (enableDebugLog)
+                {
+                    Debug.Log("🛑 发送线程已停止");
+                }
             }
 
-            var request = new UnityEngine.Networking.UnityWebRequest(url, "POST");
-            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonData);
-            request.uploadHandler = new UnityEngine.Networking.UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            request.certificateHandler = new CustomCertificateHandler();
-            request.disposeCertificateHandlerOnDispose = true;
+            httpClient?.Dispose();
+        }
 
-            yield return request.SendWebRequest();
+        /// <summary>
+        /// 消费者：发送线程循环
+        /// </summary>
+        private void SendThreadLoop()
+        {
+            while (isRunning)
+            {
+                try
+                {
+                    // 从队列取数据
+                    if (sendQueue.TryDequeue(out string json))
+                    {
+                        // 发送HTTP请求
+                        SendHttpRequest(json);
+                    }
+                    else
+                    {
+                        // 队列为空，短暂休眠避免CPU占用
+                        Thread.Sleep(1);
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"❌ 发送线程异常: {e.Message}");
+                    Thread.Sleep(100); // 出错后等待一会儿
+                }
+            }
+        }
 
-            if (request.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
+        /// <summary>
+        /// 消费者：执行HTTP请求（在发送线程中调用）
+        /// </summary>
+        private void SendHttpRequest(string jsonData)
+        {
+            try
+            {
+                string url = serverUrl;
+                if (uiController != null)
+                {
+                    url = "https://" + uiController.serverBaseUrl + "/poseData";
+                }
+
+                if (string.IsNullOrEmpty(url))
+                {
+                    Debug.LogError("❌ 服务器URL为空");
+                    return;
+                }
+
+                var content = new StringContent(
+                    jsonData,
+                    System.Text.Encoding.UTF8,
+                    "application/json"
+                );
+
+                // 同步发送（在独立线程中，不会阻塞主线程）
+                var response = httpClient.PostAsync(url, content).Result;
+
+                if (response.IsSuccessStatusCode)
+                {
+                    if (enableDebugLog)
+                    {
+                        Debug.Log($"✅ HTTP发送成功: {response.StatusCode}");
+                    }
+                }
+                else
+                {
+                    if (enableDebugLog)
+                    {
+                        Debug.LogError($"❌ HTTP发送失败: {response.StatusCode}");
+                    }
+                }
+            }
+            catch (System.Exception e)
             {
                 if (enableDebugLog)
                 {
-                    Debug.LogError($"❌ 发送失败: {request.error} (Code: {request.responseCode})");
+                    Debug.LogError($"❌ HTTP请求异常: {e.Message}");
                 }
             }
-            else if (enableDebugLog)
-            {
-                Debug.Log($"✅ 发送成功 (Code: {request.responseCode})");
-            }
-
-            request.Dispose();
         }
 
         #endregion

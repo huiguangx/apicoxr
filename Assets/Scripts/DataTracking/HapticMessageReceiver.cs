@@ -13,7 +13,7 @@ namespace DataTracking
         [Header("服务器配置")]
         [Tooltip("消息接口完整 URL (从 UIController 自动获取)")]
         [SerializeField]
-        private string messageApiUrl = "https://127.0.0.1:5000/msg"; // 仅显示，实际从 UIController 获取
+        private string messageApiUrl = "https://localhost:5000/msg"; // 仅显示，实际从 UIController 获取
 
         [Tooltip("轮询间隔（秒）")]
         [Range(0.05f, 5f)]

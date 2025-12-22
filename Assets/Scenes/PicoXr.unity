@@ -320,7 +320,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 13209f0b404cead46a55495d3b7659de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  messageApiUrl: https://127.0.0.1:5000/msg
+  messageApiUrl: https://localhost:5000/msg
   pollInterval: 0.1
   enableMessageReceiving: 1
   verboseLogging: 0
@@ -340,6 +340,7 @@ MonoBehaviour:
   enableWristRotationMapping: 0
   wristRotationMapper: {fileID: 0}
   serverUrl: https://127.0.0.1:5000/poseData
+  queueMaxSize: 10
 --- !u!4 &809539588
 Transform:
   m_ObjectHideFlags: 0
