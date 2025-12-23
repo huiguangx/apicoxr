@@ -61,7 +61,7 @@ namespace VideoStream
 
         [Tooltip("视频显示高度（米）- 建议0.5-1.5米")]
         [Range(0.3f, 3.0f)]
-        public float displayHeight = 0.9f;
+        public float displayHeight = 1.2f;
 
         [Tooltip("视频透明度（1=完全不透明，0=完全透明）")]
         [Range(0f, 1f)]
@@ -172,6 +172,8 @@ namespace VideoStream
 
             // 初始化材质
             InitializeMaterial();
+            displayWidth =1.6f;
+            displayHeight = 1.2f;
         }
 
         private void Update()
@@ -414,7 +416,10 @@ namespace VideoStream
                 UnityWebRequest request = new UnityWebRequest(url);
                 // 对于MJPEG流，禁用超时设置，因为它是持续性连接
                 request.timeout = 0; // 禁用超时
-                
+
+                // 设置证书处理器（开发环境接受所有证书）
+                request.certificateHandler = new CustomCertificateHandler();
+
                 MjpegStreamHandler handler = new MjpegStreamHandler(enableDebugLog, targetFrameRate);
 
                 // 注册帧接收事件

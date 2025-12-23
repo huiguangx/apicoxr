@@ -289,6 +289,7 @@ MonoBehaviour:
   showOnStart: 0
   serverBaseUrl: 127.0.0.1:5000
   videoStreamBaseUrl: localhost:5000
+  videoStreamType: 0
   autoStartVideoStream: 1
 --- !u!1 &809539585
 GameObject:
@@ -366,6 +367,7 @@ GameObject:
   m_Component:
   - component: {fileID: 954880086}
   - component: {fileID: 954880087}
+  - component: {fileID: 954880088}
   m_Layer: 0
   m_Name: Sereo Manager
   m_TagString: Untagged
@@ -416,6 +418,28 @@ MonoBehaviour:
   displayHeight: 1.8
   videoAlpha: 1
   showVideo: 1
+  enableDebugLog: 0
+--- !u!114 &954880088
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 954880084}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4c39dfbc29cc8a4428d19e30cd6ba91d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  serverUrl: https://localhost:5000
+  sourceType: 0
+  sharedMemoryName: stereo_color_image_shm
+  displayDistance: 2
+  displayWidth: 3.2
+  displayHeight: 1.8
+  alpha: 1
+  videoWidth: 1280
+  videoHeight: 720
   enableDebugLog: 0
 --- !u!1 &1071228540 stripped
 GameObject:

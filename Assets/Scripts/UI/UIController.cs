@@ -45,7 +45,7 @@ public class UIController : MonoBehaviour
 
     [Header("视频流配置")]
     [Tooltip("视频流服务器地址 (如 localhost:3000 或 192.168.1.100:8080)")]
-    public string videoStreamBaseUrl = "localhost:5000";
+    public string videoStreamBaseUrl = "localhost:8080";
 
     [Tooltip("视频流类型")]
     // public VideoStreamType videoStreamType = VideoStreamType.MJPEG;
@@ -114,7 +114,9 @@ public class UIController : MonoBehaviour
 
         CreateUI();
         // 强制设置为WebRTC
+        // videoStreamType = VideoStreamType.WebRTC;
         videoStreamType = VideoStreamType.MJPEG;
+        videoStreamBaseUrl = "10.11.106.157:8080";
         // 初始化参数缓存
         lastCanvasWidth = canvasWidth;
         lastCanvasHeight = canvasHeight;
@@ -165,8 +167,8 @@ public class UIController : MonoBehaviour
         yield return new WaitForSeconds(1f);
         if (videoStreamType == VideoStreamType.MJPEG)
         {
-            string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg/left";
-            string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg/right";
+            string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg_left";
+            string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg_right";
 
             Debug.Log($"🎬 自动启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
 
@@ -185,6 +187,15 @@ public class UIController : MonoBehaviour
                 webRTCStreamManager.StartStreaming();
             }
         }
+        Debug.Log($"🎬 自动启动MJPEG视频流\n   左眼: {videoStreamBaseUrl}\n   右眼: {videoStreamBaseUrl}");
+
+        // 伪数据
+        // string leftUrl = $"https://localhost:8443/left";
+        // string rightUrl = $"https://localhost:8443/right";
+        // if (videoStreamManager != null)
+        // {
+        //     videoStreamManager.StartStreaming(leftUrl, rightUrl);
+        // }
 
         // 更新UI状态（如果UI已创建）
         if (videoToggleButton != null)
@@ -1182,13 +1193,15 @@ public class UIController : MonoBehaviour
                 // 更新输入框
                 videoUrlInputField.text = videoStreamBaseUrl;
             }
-
+Debug.Log($"🎬 启动MJPEG视频流\n   左眼: {videoStreamBaseUrl}\n   右眼: {videoStreamBaseUrl}");
             // 启动对应类型的视频流
             if (videoStreamType == VideoStreamType.MJPEG)
             {
                 // 构建MJPEG URL
-                string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg/left";
-                string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg/right";
+                string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg_left";
+                string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg_right";
+                // string leftUrl = $"https://localhost:8443/left";
+                // string rightUrl = $"https://localhost:8443/right";
 
                 Debug.Log($"🎬 启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
 

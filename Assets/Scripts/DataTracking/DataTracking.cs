@@ -494,17 +494,17 @@ namespace DataTracking
 
                 if (response.IsSuccessStatusCode)
                 {
-                    if (enableDebugLog)
-                    {
+                    // if (enableDebugLog)
+                    // {
                         Debug.Log($"✅ HTTP发送成功: {response.StatusCode}");
-                    }
+                    // }
                 }
                 else
                 {
-                    if (enableDebugLog)
-                    {
+                    // if (enableDebugLog)
+                    // {
                         Debug.LogError($"❌ HTTP发送失败: {response.StatusCode}");
-                    }
+                    // }
                 }
             }
             catch (System.Exception e)
