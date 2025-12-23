@@ -98,25 +98,26 @@ public class UIController : MonoBehaviour
 
     private void Start()
     {
-        // 从 PlayerPrefs 加载服务器地址
-        if (PlayerPrefs.HasKey("ServerBaseUrl"))
-        {
-            serverBaseUrl = PlayerPrefs.GetString("ServerBaseUrl");
-            Debug.Log($"📥 从 PlayerPrefs 加载服务器地址: {serverBaseUrl}");
-        }
+        // // 从 PlayerPrefs 加载服务器地址
+        // if (PlayerPrefs.HasKey("ServerBaseUrl"))
+        // {
+        //     serverBaseUrl = PlayerPrefs.GetString("ServerBaseUrl");
+        //     Debug.Log($"📥 从 PlayerPrefs 加载服务器地址: {serverBaseUrl}");
+        // }
 
-        // 从 PlayerPrefs 加载视频流地址
-        if (PlayerPrefs.HasKey("VideoStreamBaseUrl"))
-        {
-            videoStreamBaseUrl = PlayerPrefs.GetString("VideoStreamBaseUrl");
-            Debug.Log($"📥 从 PlayerPrefs 加载视频流地址: {videoStreamBaseUrl}");
-        }
+        // // 从 PlayerPrefs 加载视频流地址
+        // if (PlayerPrefs.HasKey("VideoStreamBaseUrl"))
+        // {
+        //     videoStreamBaseUrl = PlayerPrefs.GetString("VideoStreamBaseUrl");
+        //     Debug.Log($"📥 从 PlayerPrefs 加载视频流地址: {videoStreamBaseUrl}");
+        // }
 
         CreateUI();
         // 强制设置为WebRTC
         // videoStreamType = VideoStreamType.WebRTC;
         videoStreamType = VideoStreamType.MJPEG;
         videoStreamBaseUrl = "10.11.106.157:8080";
+        // videoStreamBaseUrl = "localhost:8080";
         // 初始化参数缓存
         lastCanvasWidth = canvasWidth;
         lastCanvasHeight = canvasHeight;
@@ -167,8 +168,8 @@ public class UIController : MonoBehaviour
         yield return new WaitForSeconds(1f);
         if (videoStreamType == VideoStreamType.MJPEG)
         {
-            string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg_left";
-            string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg_right";
+            string leftUrl = $"https://{videoStreamBaseUrl}/mjpeg_left";
+            string rightUrl = $"https://{videoStreamBaseUrl}/mjpeg_right";
 
             Debug.Log($"🎬 自动启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
 
@@ -1198,8 +1199,8 @@ Debug.Log($"🎬 启动MJPEG视频流\n   左眼: {videoStreamBaseUrl}\n   右�
             if (videoStreamType == VideoStreamType.MJPEG)
             {
                 // 构建MJPEG URL
-                string leftUrl = $"http://{videoStreamBaseUrl}/mjpeg_left";
-                string rightUrl = $"http://{videoStreamBaseUrl}/mjpeg_right";
+                string leftUrl = $"https://{videoStreamBaseUrl}/mjpeg_left";
+                string rightUrl = $"https://{videoStreamBaseUrl}/mjpeg_right";
                 // string leftUrl = $"https://localhost:8443/left";
                 // string rightUrl = $"https://localhost:8443/right";
 
@@ -1222,7 +1223,7 @@ Debug.Log($"🎬 启动MJPEG视频流\n   左眼: {videoStreamBaseUrl}\n   右�
                     webRTCStreamManager.StartStreaming();
                 }
             }
-
+Debug.Log($"🎬 启动WebRTC视频流\n   服务器: http://{videoStreamBaseUrl}");
             if (videoToggleButton != null)
             {
                 Text btnText = videoToggleButton.GetComponentInChildren<Text>();

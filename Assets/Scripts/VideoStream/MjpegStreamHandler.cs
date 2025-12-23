@@ -15,7 +15,8 @@ namespace VideoStream
         #region 常量定义
 
         // MJPEG流的边界标记
-        private static readonly byte[] BOUNDARY = Encoding.UTF8.GetBytes("--boundarydonotcross");
+        // private static readonly byte[] BOUNDARY = Encoding.UTF8.GetBytes("--boundarydonotcross");
+        private static readonly byte[] BOUNDARY = Encoding.UTF8.GetBytes("--frame");
 
         // JPEG文件格式标记
         private static readonly byte[] JPEG_START = new byte[] { 0xFF, 0xD8 }; // JPEG起始标记
