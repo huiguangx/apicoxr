@@ -28,17 +28,20 @@ namespace VideoStream
         [Tooltip("纹理过滤模式 - Point速度快但有锯齿，Bilinear平滑但稍慢")]
         public FilterMode textureFilterMode = FilterMode.Bilinear;
         
-        [Tooltip("是否限制帧率以减少CPU负载")]
-        public bool limitFrameRate = true;
-        
-        [Tooltip("最大帧间隔（毫秒），超过此时间才会更新纹理")]
+        [Tooltip("是否限制帧率以减少CPU负载 - 启用交替更新后可关闭")]
+        public bool limitFrameRate = false;
+
+        [Tooltip("最大帧间隔（毫秒），超过此时间才会更新纹理 - 仅在limitFrameRate=true时生效")]
         public int maxFrameInterval = 33; // 约30fps
         
-        [Tooltip("纹理更新频率（每N帧更新一次）")]
-        public int textureUpdateFrequency = 2;
-        
+        [Tooltip("纹理更新频率（每N帧更新一次）- 推荐值：3-6，在90Hz设备上等效15-30fps")]
+        public int textureUpdateFrequency = 6;
+
+        [Tooltip("交替更新左右眼（推荐）- 每帧只更新一只眼睛，避免单帧双重JPEG解码阻塞主线程")]
+        public bool alternateEyeUpdate = true;
+
         [Tooltip("是否在后台线程解码JPEG图像以减轻主线程负担")]
-        public bool useBackgroundThreadForDecoding = false;
+        public bool useBackgroundThreadForDecoding = true;
 
         [Header("网络容错")]
         [Tooltip("连接超时时间（秒）")]
@@ -126,6 +129,9 @@ namespace VideoStream
         // 帧率控制
         private float lastFrameTime = 0f;
 
+        // 交替更新眼睛（避免单帧解码两只眼睛导致卡顿）
+        private bool updateLeftEyeThisFrame = true;
+
         // URL
         private string currentLeftUrl;
         private string currentRightUrl;
@@ -178,20 +184,22 @@ namespace VideoStream
 
         private void Update()
         {
-            // 控制纹理更新频率，减轻主线程负担
+            // 【严格控制】纹理更新频率，防止高帧率VR设备上频繁解码JPEG
+            // 在90Hz设备上，textureUpdateFrequency=6 意味着每6帧更新一次，约15fps
+            // 结合alternateEyeUpdate，每只眼睛约7.5fps，但视觉上仍然流畅
             if (textureUpdateFrequency <= 1 || Time.frameCount % textureUpdateFrequency == 0)
             {
                 UpdateTextures();
             }
 
-            // 控制统计信息更新频率（每秒约10次）
-            if (Time.frameCount % Mathf.Max(1, Application.targetFrameRate / 10) == 0)
+            // 控制统计信息更新频率（降低到每秒5次，减少CPU负载）
+            if (Time.frameCount % 18 == 0) // 90Hz下约每秒5次
             {
                 UpdateStatistics();
             }
 
-            // 控制视频属性更新频率（每秒约20次）
-            if (Time.frameCount % Mathf.Max(1, Application.targetFrameRate / 20) == 0)
+            // 控制视频属性更新频率（降低到每秒10次）
+            if (Time.frameCount % 9 == 0) // 90Hz下约每秒10次
             {
                 UpdateVideoAlpha();
                 UpdateVideoVisibility();
@@ -556,56 +564,125 @@ namespace VideoStream
 
         /// <summary>
         /// 更新纹理（必须在主线程调用）
+        /// 优化：支持交替更新模式，避免单帧双重解码阻塞
         /// </summary>
         private void UpdateTextures()
         {
-            // 帧率控制 - 限制纹理更新频率避免卡顿
-            float currentTime = Time.time;
+            // 【双重保护1】时间间隔控制 - 确保至少间隔一定时间才更新
+            // 即使textureUpdateFrequency=1，也会被这个限制住
+            float currentTime = Time.realtimeSinceStartup;
+            float minInterval = 0.050f; // 最小间隔50ms，意味着最高20fps
+
+            if ((currentTime - lastFrameTime) < minInterval)
+            {
+                return; // 距离上次更新时间太短，跳过
+            }
+
+            // 【双重保护2】可选的帧率限制
             if (limitFrameRate && (currentTime - lastFrameTime) < (maxFrameInterval / 1000f))
             {
-                return; // 跳过此次更新
+                return;
             }
 
             lock (frameLock)
             {
                 bool updated = false;
 
-                // 更新左眼纹理
-                if (leftFrameReady && leftFrameBuffer != null)
+                if (alternateEyeUpdate)
                 {
-                    try
+                    // 【推荐模式】交替更新左右眼，避免单帧解码2次JPEG
+                    // 这样每帧只有一次 LoadImage() 调用，将主线程阻塞时间减半
+                    if (updateLeftEyeThisFrame)
                     {
-                        leftEyeTexture.LoadImage(leftFrameBuffer);
-                        leftFrameReady = false;
-                        leftFrameCount++; // 只在实际显示时计数
-
-                        // 调试日志：验证在此处计数
-                        if (enableDebugLog && leftFrameCount % 30 == 0)
+                        // 本帧更新左眼
+                        if (leftFrameReady && leftFrameBuffer != null)
                         {
-                            Debug.Log($"[StereoVideoStreamManager] UpdateTextures: 显示第{leftFrameCount}帧（计入FPS统计）");
+                            try
+                            {
+                                leftEyeTexture.LoadImage(leftFrameBuffer);
+                                leftFrameReady = false;
+                                leftFrameCount++;
+
+                                if (enableDebugLog && leftFrameCount % 30 == 0)
+                                {
+                                    Debug.Log($"[StereoVideoStreamManager] 更新左眼第{leftFrameCount}帧 (间隔{(currentTime - lastFrameTime) * 1000:F1}ms)");
+                                }
+
+                                updated = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogError($"[StereoVideoStreamManager] 左眼纹理更新失败: {ex.Message}");
+                            }
                         }
-
-                        updated = true;
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        Debug.LogError($"[StereoVideoStreamManager] 左眼纹理更新失败: {ex.Message}");
+                        // 本帧更新右眼
+                        if (rightFrameReady && rightFrameBuffer != null)
+                        {
+                            try
+                            {
+                                rightEyeTexture.LoadImage(rightFrameBuffer);
+                                rightFrameReady = false;
+                                rightFrameCount++;
+
+                                if (enableDebugLog && rightFrameCount % 30 == 0)
+                                {
+                                    Debug.Log($"[StereoVideoStreamManager] 更新右眼第{rightFrameCount}帧 (间隔{(currentTime - lastFrameTime) * 1000:F1}ms)");
+                                }
+
+                                updated = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogError($"[StereoVideoStreamManager] 右眼纹理更新失败: {ex.Message}");
+                            }
+                        }
                     }
+
+                    // 切换下一帧要更新的眼睛
+                    updateLeftEyeThisFrame = !updateLeftEyeThisFrame;
                 }
-
-                // 更新右眼纹理
-                if (rightFrameReady && rightFrameBuffer != null)
+                else
                 {
-                    try
+                    // 【传统模式】同时更新双眼（可能导致卡顿）
+                    // 更新左眼纹理
+                    if (leftFrameReady && leftFrameBuffer != null)
                     {
-                        rightEyeTexture.LoadImage(rightFrameBuffer);
-                        rightFrameReady = false;
-                        rightFrameCount++; // 只在实际显示时计数
-                        updated = true;
+                        try
+                        {
+                            leftEyeTexture.LoadImage(leftFrameBuffer);
+                            leftFrameReady = false;
+                            leftFrameCount++;
+
+                            if (enableDebugLog && leftFrameCount % 30 == 0)
+                            {
+                                Debug.Log($"[StereoVideoStreamManager] UpdateTextures: 显示第{leftFrameCount}帧（计入FPS统计）");
+                            }
+
+                            updated = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"[StereoVideoStreamManager] 左眼纹理更新失败: {ex.Message}");
+                        }
                     }
-                    catch (Exception ex)
+
+                    // 更新右眼纹理
+                    if (rightFrameReady && rightFrameBuffer != null)
                     {
-                        Debug.LogError($"[StereoVideoStreamManager] 右眼纹理更新失败: {ex.Message}");
+                        try
+                        {
+                            rightEyeTexture.LoadImage(rightFrameBuffer);
+                            rightFrameReady = false;
+                            rightFrameCount++;
+                            updated = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"[StereoVideoStreamManager] 右眼纹理更新失败: {ex.Message}");
+                        }
                     }
                 }
 

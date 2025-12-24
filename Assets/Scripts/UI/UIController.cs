@@ -116,8 +116,8 @@ public class UIController : MonoBehaviour
         // 强制设置为WebRTC
         // videoStreamType = VideoStreamType.WebRTC;
         videoStreamType = VideoStreamType.MJPEG;
-        videoStreamBaseUrl = "10.11.106.157:8080";
-        // videoStreamBaseUrl = "localhost:8080";
+        // videoStreamBaseUrl = "10.11.106.157:5000";
+        videoStreamBaseUrl = "localhost:5000";
         // 初始化参数缓存
         lastCanvasWidth = canvasWidth;
         lastCanvasHeight = canvasHeight;
