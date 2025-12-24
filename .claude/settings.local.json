@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(dir:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(ls -la \"C:\\\\work_project\\\\pico_project\\\\app\\\\apicoxr\\\\Assets\\\\Scripts\\\\VideoStream\"\" | findstr \".cs \")",
+      "Bash(ls -la \"C:\\\\work_project\\\\pico_project\\\\app\\\\apicoxr\\\\Assets\\\\Scripts\\\\DataTracking\"\" | findstr \".cs \")",
+      "Bash(ls -la \"C:\\\\work_project\\\\pico_project\\\\app\\\\apicoxr\\\\Assets\\\\Shaders\"\" | findstr \".shader \")",
+      "Bash(ls:*)",
+      "Bash(grep:*)"
     ]
   }
 }

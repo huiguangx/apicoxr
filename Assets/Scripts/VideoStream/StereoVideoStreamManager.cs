@@ -1091,4 +1091,18 @@ namespace VideoStream
 
         #endregion
     }
+
+    /// <summary>
+    /// 自定义证书处理器 - 接受所有SSL证书（仅开发环境使用）
+    /// 生产环境应实现正确的证书验证
+    /// </summary>
+    public class CustomCertificateHandler : UnityEngine.Networking.CertificateHandler
+    {
+        protected override bool ValidateCertificate(byte[] certificateData)
+        {
+            // 开发环境：接受所有证书（包括自签名证书）
+            // 生产环境：应实现正确的证书链验证和证书固定
+            return true;
+        }
+    }
 }
