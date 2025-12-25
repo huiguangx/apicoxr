@@ -70,7 +70,7 @@ namespace VideoStream
         [Header("显示设置")]
         [Tooltip("视频显示距离（米）- 建议1.0-3.0米")]
         [Range(0.2f, 5.0f)]
-        public float displayDistance = 1.5f;
+        public float displayDistance = 1.0f;
 
         [Tooltip("视频显示宽度（米）- 建议1.0-2.0米")]
         [Range(0.5f, 5.0f)]
@@ -201,6 +201,7 @@ namespace VideoStream
             InitializeMaterial();
             displayWidth =1.6f;
             displayHeight = 1.2f;
+            displayDistance = 1.3f;
             // 设置默认流模式为双流
             streamMode = MjpegStreamMode.SideBySide;
         }
