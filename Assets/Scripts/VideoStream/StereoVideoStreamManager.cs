@@ -119,7 +119,6 @@ namespace VideoStream
         // side-by-side模式的完整帧缓冲
         private byte[] sideBySideFrameBuffer;
         private bool sideBySideFrameReady = false;
-        private Texture2D sideBySideTexture; // 临时纹理用于加载完整的side-by-side图像
         
         // 后台线程解码相关
         private System.Threading.Thread decodingThread;
@@ -292,6 +291,13 @@ namespace VideoStream
                 // 启动双目流
                 isStreaming = true;
 
+                // 设置Shader为双流模式
+                if (stereoMaterial != null)
+                {
+                    stereoMaterial.SetFloat("_UseSideBySide", 0);
+                    Debug.Log("[StereoVideoStreamManager] Shader已切换到双流模式");
+                }
+
                 // 如果启用了后台线程解码，则启动解码线程
                 if (useBackgroundThreadForDecoding)
                 {
@@ -339,14 +345,6 @@ namespace VideoStream
             // 重置连接状态
             sideBySideStreamConnected = false;
 
-            // 初始化side-by-side临时纹理
-            if (sideBySideTexture == null)
-            {
-                sideBySideTexture = new Texture2D(2, 2, textureFormat, false);
-                sideBySideTexture.filterMode = textureFilterMode;
-                sideBySideTexture.wrapMode = TextureWrapMode.Clamp;
-            }
-
             // 创建沉浸式显示
             CreateImmersiveDisplay();
 
@@ -358,6 +356,13 @@ namespace VideoStream
 
             // 启动单流
             isStreaming = true;
+
+            // 设置Shader为Side-by-Side模式
+            if (stereoMaterial != null)
+            {
+                stereoMaterial.SetFloat("_UseSideBySide", 1);
+                Debug.Log("[StereoVideoStreamManager] Shader已切换到Side-by-Side模式（GPU切分）");
+            }
 
             // 如果启用了后台线程解码，则启动解码线程
             if (useBackgroundThreadForDecoding)
@@ -498,6 +503,9 @@ namespace VideoStream
             // 设置纹理
             stereoMaterial.SetTexture("_LeftEyeTex", leftEyeTexture);
             stereoMaterial.SetTexture("_RightEyeTex", rightEyeTexture);
+
+            // 设置Shader模式（默认双流模式）
+            stereoMaterial.SetFloat("_UseSideBySide", 0);
 
             if (enableDebugLog)
             {
@@ -816,71 +824,30 @@ namespace VideoStream
             {
                 bool updated = false;
 
-                // Side-by-Side 模式处理
+                // Side-by-Side 模式处理 - GPU切分优化版本
+                // 直接加载完整图像到leftEyeTexture，由Shader在GPU上切分
                 if (streamMode == MjpegStreamMode.SideBySide && sideBySideFrameReady && sideBySideFrameBuffer != null)
                 {
                     try
                     {
-                        // 加载完整的 side-by-side 图像到临时纹理
-                        sideBySideTexture.LoadImage(sideBySideFrameBuffer);
+                        // 直接加载完整的side-by-side图像到leftEyeTexture
+                        // Shader会根据_UseSideBySide标志自动切分左右半部分
+                        leftEyeTexture.LoadImage(sideBySideFrameBuffer);
                         sideBySideFrameReady = false;
 
-                        // 获取完整图像的尺寸
-                        int fullWidth = sideBySideTexture.width;
-                        int fullHeight = sideBySideTexture.height;
-                        int halfWidth = fullWidth / 2;
-
-                        if (enableDebugLog && leftFrameCount % 30 == 0)
-                        {
-                            Debug.Log($"[StereoVideoStreamManager] Side-by-Side 图像尺寸: {fullWidth}x{fullHeight}，切分为 {halfWidth}x{fullHeight}");
-                        }
-
-                        // 获取完整图像的像素数据
-                        Color[] pixels = sideBySideTexture.GetPixels();
-
-                        // 创建左右眼的像素数组
-                        Color[] leftPixels = new Color[halfWidth * fullHeight];
-                        Color[] rightPixels = new Color[halfWidth * fullHeight];
-
-                        // 切分图像：左半部分到左眼，右半部分到右眼
-                        for (int y = 0; y < fullHeight; y++)
-                        {
-                            for (int x = 0; x < halfWidth; x++)
-                            {
-                                // 左半部分
-                                leftPixels[y * halfWidth + x] = pixels[y * fullWidth + x];
-                                // 右半部分
-                                rightPixels[y * halfWidth + x] = pixels[y * fullWidth + (x + halfWidth)];
-                            }
-                        }
-
-                        // 调整左右眼纹理尺寸（如果需要）
-                        if (leftEyeTexture.width != halfWidth || leftEyeTexture.height != fullHeight)
-                        {
-                            leftEyeTexture.Reinitialize(halfWidth, fullHeight);
-                            rightEyeTexture.Reinitialize(halfWidth, fullHeight);
-                        }
-
-                        // 应用像素到左右眼纹理
-                        leftEyeTexture.SetPixels(leftPixels);
-                        leftEyeTexture.Apply();
-
-                        rightEyeTexture.SetPixels(rightPixels);
-                        rightEyeTexture.Apply();
-
                         leftFrameCount++;
-                        rightFrameCount++;
+                        rightFrameCount++; // 统计用，实际只加载了一次
 
                         if (enableDebugLog && leftFrameCount % 30 == 0)
                         {
-                            Debug.Log($"[StereoVideoStreamManager] Side-by-Side 第{leftFrameCount}帧切分完成");
+                            Debug.Log($"[StereoVideoStreamManager] Side-by-Side 第{leftFrameCount}帧已加载（GPU切分，尺寸: {leftEyeTexture.width}x{leftEyeTexture.height}）");
                         }
 
                         updated = true;
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogError($"[StereoVideoStreamManager] Side-by-Side 纹理切分失败: {ex.Message}");
+                        Debug.LogError($"[StereoVideoStreamManager] Side-by-Side 纹理加载失败: {ex.Message}");
                     }
                 }
                 else if (streamMode == MjpegStreamMode.DualStream && alternateEyeUpdate)

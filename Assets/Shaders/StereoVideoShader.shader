@@ -5,6 +5,7 @@ Shader "Custom/StereoVideoShader"
         _LeftEyeTex ("Left Eye Texture", 2D) = "white" {}
         _RightEyeTex ("Right Eye Texture", 2D) = "white" {}
         _Color ("Tint Color", Color) = (1,1,1,1)
+        _UseSideBySide ("Use Side-by-Side Mode", Float) = 0
     }
 
     SubShader
@@ -43,6 +44,7 @@ Shader "Custom/StereoVideoShader"
             sampler2D _RightEyeTex;
             float4 _LeftEyeTex_ST;
             fixed4 _Color;
+            float _UseSideBySide;
 
             v2f vert (appdata v)
             {
@@ -65,21 +67,50 @@ Shader "Custom/StereoVideoShader"
                 // unity_StereoEyeIndex: 0 = 左眼, 1 = 右眼
                 fixed4 col;
 
-                #if defined(UNITY_STEREO_INSTANCING_ENABLED) || defined(UNITY_STEREO_MULTIVIEW_ENABLED)
-                    if (unity_StereoEyeIndex == 0)
-                    {
-                        // 左眼显示左眼纹理
+                if (_UseSideBySide > 0.5)
+                {
+                    // Side-by-Side模式：从单个纹理中采样左半或右半部分
+                    // GPU上进行切分，避免CPU像素拷贝
+                    float2 uv = i.uv;
+
+                    #if defined(UNITY_STEREO_INSTANCING_ENABLED) || defined(UNITY_STEREO_MULTIVIEW_ENABLED)
+                        if (unity_StereoEyeIndex == 0)
+                        {
+                            // 左眼：采样左半部分（将uv.x从0-1映射到0-0.5）
+                            uv.x *= 0.5;
+                            col = tex2D(_LeftEyeTex, uv);
+                        }
+                        else
+                        {
+                            // 右眼：采样右半部分（将uv.x从0-1映射到0.5-1）
+                            uv.x = uv.x * 0.5 + 0.5;
+                            col = tex2D(_LeftEyeTex, uv);
+                        }
+                    #else
+                        // 非VR模式，默认显示左眼（左半部分）
+                        uv.x *= 0.5;
+                        col = tex2D(_LeftEyeTex, uv);
+                    #endif
+                }
+                else
+                {
+                    // 双流模式：分别使用左右眼纹理
+                    #if defined(UNITY_STEREO_INSTANCING_ENABLED) || defined(UNITY_STEREO_MULTIVIEW_ENABLED)
+                        if (unity_StereoEyeIndex == 0)
+                        {
+                            // 左眼显示左眼纹理
+                            col = tex2D(_LeftEyeTex, i.uv);
+                        }
+                        else
+                        {
+                            // 右眼显示右眼纹理
+                            col = tex2D(_RightEyeTex, i.uv);
+                        }
+                    #else
+                        // 非VR模式，默认显示左眼
                         col = tex2D(_LeftEyeTex, i.uv);
-                    }
-                    else
-                    {
-                        // 右眼显示右眼纹理
-                        col = tex2D(_RightEyeTex, i.uv);
-                    }
-                #else
-                    // 非VR模式，默认显示左眼
-                    col = tex2D(_LeftEyeTex, i.uv);
-                #endif
+                    #endif
+                }
 
                 // 应用颜色和透明度（_Color.a控制整体透明度）
                 col *= _Color;
