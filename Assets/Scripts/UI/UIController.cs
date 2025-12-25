@@ -51,7 +51,7 @@ public class UIController : MonoBehaviour
     public VideoStreamType videoStreamType = VideoStreamType.MJPEG;
 
     [Tooltip("是否在启动时自动开启视频流")]
-    public bool autoStartVideoStream = false;  // 改为默认false，避免遮挡UI
+    public bool autoStartVideoStream = true;  // 改为默认false，避免遮挡UI
 
     // 内部引用
     private Canvas canvas;
@@ -111,7 +111,7 @@ public class UIController : MonoBehaviour
         // }
 
         CreateUI();
-        // videoStreamBaseUrl = "10.11.106.157:8080";
+        // videoStreamBaseUrl = "10.11.106.157:5000";
         videoStreamBaseUrl = "localhost:5000";
         // 初始化参数缓存
         lastCanvasWidth = canvasWidth;
@@ -155,15 +155,26 @@ public class UIController : MonoBehaviour
     {
         yield return new WaitForSeconds(1f);
 
-        string leftUrl = $"https://{videoStreamBaseUrl}/mjpeg_left";
-        string rightUrl = $"https://{videoStreamBaseUrl}/mjpeg_right";
 
-        Debug.Log($"🎬 自动启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+        Debug.Log($"🎬 自动启动MJPEG视频流\n");
 
-        if (videoStreamManager != null)
-        {
-            videoStreamManager.StartStreaming(leftUrl, rightUrl);
-        }
+        if (videoStreamManager.streamMode == VideoStream.MjpegStreamMode.DualStream)
+            {
+                // 双流模式：左右眼分别从不同URL获取
+                string leftUrl = $"https://{videoStreamBaseUrl}/mjpeg";
+                string rightUrl = $"https://{videoStreamBaseUrl}/mjpeg";
+
+                Debug.Log($"🎬 启动双流模式 MJPEG\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+                videoStreamManager.StartStreaming(leftUrl, rightUrl);
+            }
+            else
+            {
+                // 并排模式：从单个URL获取side-by-side图像
+                string sideBySideUrl = $"https://{videoStreamBaseUrl}/mjpeg";
+
+                Debug.Log($"🎬 启动并排模式 MJPEG (Side-by-Side)\n   URL: {sideBySideUrl}");
+                videoStreamManager.StartStreamingSideBySide(sideBySideUrl);
+            }
 
         // 更新UI状态（如果UI已创建）
         if (videoToggleButton != null)
@@ -984,16 +995,16 @@ public class UIController : MonoBehaviour
         layoutElement.preferredHeight = 200;
         layoutElement.flexibleWidth = 1;
 
-        // 创建标题文本
+        // 创建标题文本（左侧）
         GameObject titleObj = new GameObject("VideoStreamTitle");
         titleObj.transform.SetParent(videoContainer.transform, false);
 
         RectTransform titleRect = titleObj.AddComponent<RectTransform>();
         titleRect.anchorMin = new Vector2(0, 0.7f);
-        titleRect.anchorMax = new Vector2(1, 1f);
-        titleRect.pivot = new Vector2(0.5f, 0.5f);
+        titleRect.anchorMax = new Vector2(0.5f, 1f);
+        titleRect.pivot = new Vector2(0, 0.5f);
         titleRect.offsetMin = new Vector2(10, 0);
-        titleRect.offsetMax = new Vector2(-10, 0);
+        titleRect.offsetMax = new Vector2(-5, 0);
 
         Text titleText = CreateTextComponent(titleObj, "TitleText");
         titleText.text = "视频流设置";
@@ -1001,6 +1012,31 @@ public class UIController : MonoBehaviour
         titleText.alignment = TextAnchor.MiddleLeft;
         titleText.fontStyle = FontStyle.Bold;
         titleText.color = new Color(0.8f, 0.8f, 0.8f, 1f);
+
+        // 创建模式切换按钮（右侧）
+        GameObject modeBtnObj = new GameObject("StreamModeToggleButton");
+        modeBtnObj.transform.SetParent(videoContainer.transform, false);
+
+        RectTransform modeRect = modeBtnObj.AddComponent<RectTransform>();
+        modeRect.anchorMin = new Vector2(0.5f, 0.7f);
+        modeRect.anchorMax = new Vector2(1f, 1f);
+        modeRect.pivot = new Vector2(0.5f, 0.5f);
+        modeRect.offsetMin = new Vector2(5, 5);
+        modeRect.offsetMax = new Vector2(-10, -5);
+
+        streamTypeToggleButton = modeBtnObj.AddComponent<Button>();
+
+        Image modeBg = modeBtnObj.AddComponent<Image>();
+        modeBg.color = new Color(0.7f, 0.4f, 0.9f, 1f); // 紫色
+        streamTypeToggleButton.targetGraphic = modeBg;
+
+        streamTypeText = CreateTextComponent(modeBtnObj, "ModeText");
+        UpdateStreamModeText(); // 初始化文本
+        streamTypeText.fontSize = 24;
+        streamTypeText.alignment = TextAnchor.MiddleCenter;
+        streamTypeText.fontStyle = FontStyle.Bold;
+
+        streamTypeToggleButton.onClick.AddListener(OnStreamModeToggleClicked);
 
         // 创建输入框（上半部分，0.4-0.7）
         GameObject inputFieldObj = new GameObject("VideoUrlInputField");
@@ -1136,14 +1172,24 @@ public class UIController : MonoBehaviour
                 videoUrlInputField.text = videoStreamBaseUrl;
             }
 
-            // 构建MJPEG URL
-            string leftUrl = $"https://{videoStreamBaseUrl}/mjpeg_left";
-            string rightUrl = $"https://{videoStreamBaseUrl}/mjpeg_right";
+            // 根据模式构建MJPEG URL
+            if (videoStreamManager.streamMode == VideoStream.MjpegStreamMode.DualStream)
+            {
+                // 双流模式：左右眼分别从不同URL获取
+                string leftUrl = $"https://{videoStreamBaseUrl}/mjpeg";
+                string rightUrl = $"https://{videoStreamBaseUrl}/mjpeg";
 
-            Debug.Log($"🎬 启动MJPEG视频流\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+                Debug.Log($"🎬 启动双流模式 MJPEG\n   左眼: {leftUrl}\n   右眼: {rightUrl}");
+                videoStreamManager.StartStreaming(leftUrl, rightUrl);
+            }
+            else
+            {
+                // 并排模式：从单个URL获取side-by-side图像
+                string sideBySideUrl = $"https://{videoStreamBaseUrl}/mjpeg";
 
-            // 启动视频流
-            videoStreamManager.StartStreaming(leftUrl, rightUrl);
+                Debug.Log($"🎬 启动并排模式 MJPEG (Side-by-Side)\n   URL: {sideBySideUrl}");
+                videoStreamManager.StartStreamingSideBySide(sideBySideUrl);
+            }
 
             if (videoToggleButton != null)
             {
@@ -1176,6 +1222,65 @@ public class UIController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 模式切换按钮点击事件
+    /// </summary>
+    private void OnStreamModeToggleClicked()
+    {
+        if (videoStreamManager == null)
+        {
+            Debug.LogError("❌ 未找到 StereoVideoStreamManager 组件");
+            return;
+        }
+
+        // 如果正在播放，先停止
+        if (videoStreamManager.IsStreaming)
+        {
+            videoStreamManager.StopStreaming();
+        }
+
+        // 切换模式
+        if (videoStreamManager.streamMode == VideoStream.MjpegStreamMode.DualStream)
+        {
+            videoStreamManager.streamMode = VideoStream.MjpegStreamMode.SideBySide;
+            Debug.Log("📺 切换到 Side-by-Side 模式");
+        }
+        else
+        {
+            videoStreamManager.streamMode = VideoStream.MjpegStreamMode.DualStream;
+            Debug.Log("📺 切换到双流模式");
+        }
+
+        // 更新按钮文本
+        UpdateStreamModeText();
+
+        // 更新状态文本
+        if (videoStatusText != null)
+        {
+            string modeText = videoStreamManager.streamMode == VideoStream.MjpegStreamMode.DualStream ? "双流" : "并排";
+            videoStatusText.text = $"视频流模式: {modeText}";
+            videoStatusText.color = Color.cyan;
+        }
+    }
+
+    /// <summary>
+    /// 更新模式按钮文本
+    /// </summary>
+    private void UpdateStreamModeText()
+    {
+        if (streamTypeText == null || videoStreamManager == null)
+            return;
+
+        if (videoStreamManager.streamMode == VideoStream.MjpegStreamMode.DualStream)
+        {
+            streamTypeText.text = "模式: 双流";
+        }
+        else
+        {
+            streamTypeText.text = "模式: 并排";
+        }
+    }
+
     private void OnDestroy()
     {
         foreach (Button btn in buttons)
@@ -1199,6 +1304,11 @@ public class UIController : MonoBehaviour
         if (videoToggleButton != null)
         {
             videoToggleButton.onClick.RemoveListener(OnVideoToggleClicked);
+        }
+
+        if (streamTypeToggleButton != null)
+        {
+            streamTypeToggleButton.onClick.RemoveListener(OnStreamModeToggleClicked);
         }
     }
 }

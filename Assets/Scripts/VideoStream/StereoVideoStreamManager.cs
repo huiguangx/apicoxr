@@ -6,13 +6,27 @@ using UnityEngine.Networking;
 namespace VideoStream
 {
     /// <summary>
+    /// MJPEG流模式
+    /// </summary>
+    public enum MjpegStreamMode
+    {
+        DualStream,     // 双流模式：左右眼分别从两个URL获取
+        SideBySide      // 并排模式：从单个URL获取并排图像，然后切分
+    }
+
+    /// <summary>
     /// 立体视频流管理器
     /// 管理双目MJPEG视频流的下载、解码和显示
     /// 支持VR第一人称沉浸式显示
+    /// 支持双流模式和并排模式
     /// </summary>
     public class StereoVideoStreamManager : MonoBehaviour
     {
         #region 配置参数
+
+        [Header("流模式设置")]
+        [Tooltip("MJPEG流模式 - DualStream(双流)或SideBySide(并排)")]
+        public MjpegStreamMode streamMode = MjpegStreamMode.SideBySide;
 
         [Header("性能设置")]
         [Tooltip("目标帧率")]
@@ -93,11 +107,19 @@ namespace VideoStream
         // 流管理
         private Coroutine leftStreamCoroutine;
         private Coroutine rightStreamCoroutine;
+        private Coroutine sideBySideStreamCoroutine; // side-by-side单流协程
         private UnityWebRequest leftRequest;
         private UnityWebRequest rightRequest;
+        private UnityWebRequest sideBySideRequest; // side-by-side请求
         private bool isStreaming = false;
         private bool leftStreamConnected = false;  // 左眼流连接状态
         private bool rightStreamConnected = false; // 右眼流连接状态
+        private bool sideBySideStreamConnected = false; // side-by-side流连接状态
+
+        // side-by-side模式的完整帧缓冲
+        private byte[] sideBySideFrameBuffer;
+        private bool sideBySideFrameReady = false;
+        private Texture2D sideBySideTexture; // 临时纹理用于加载完整的side-by-side图像
         
         // 后台线程解码相关
         private System.Threading.Thread decodingThread;
@@ -180,6 +202,8 @@ namespace VideoStream
             InitializeMaterial();
             displayWidth =1.6f;
             displayHeight = 1.2f;
+            // 设置默认流模式为双流
+            streamMode = MjpegStreamMode.SideBySide;
         }
 
         private void Update()
@@ -220,7 +244,7 @@ namespace VideoStream
         #region 公共方法
 
         /// <summary>
-        /// 开始播放视频流
+        /// 开始播放视频流 - 双流模式
         /// </summary>
         /// <param name="leftUrl">左眼视频流URL</param>
         /// <param name="rightUrl">右眼视频流URL</param>
@@ -232,7 +256,71 @@ namespace VideoStream
                 StopStreaming();
             }
 
-            if (string.IsNullOrEmpty(leftUrl) || string.IsNullOrEmpty(rightUrl))
+            if (streamMode == MjpegStreamMode.DualStream)
+            {
+                // 双流模式
+                if (string.IsNullOrEmpty(leftUrl) || string.IsNullOrEmpty(rightUrl))
+                {
+                    Debug.LogError("[StereoVideoStreamManager] URL不能为空");
+                    return;
+                }
+
+                if (mainCamera == null)
+                {
+                    Debug.LogError("[StereoVideoStreamManager] 主相机未找到，无法启动视频流");
+                    return;
+                }
+
+                currentLeftUrl = leftUrl;
+                currentRightUrl = rightUrl;
+
+                Debug.Log($"[StereoVideoStreamManager] 启动双流模式\nLeft: {leftUrl}\nRight: {rightUrl}");
+
+                // 重置连接状态
+                leftStreamConnected = false;
+                rightStreamConnected = false;
+
+                // 创建沉浸式显示
+                CreateImmersiveDisplay();
+
+                // 重置统计信息
+                leftFrameCount = 0;
+                rightFrameCount = 0;
+                statsTimer = 0f;
+                currentFPS = 0f;
+
+                // 启动双目流
+                isStreaming = true;
+
+                // 如果启用了后台线程解码，则启动解码线程
+                if (useBackgroundThreadForDecoding)
+                {
+                    StartDecodingThread();
+                }
+
+                leftStreamCoroutine = StartCoroutine(StreamEye(leftUrl, true));
+                rightStreamCoroutine = StartCoroutine(StreamEye(rightUrl, false));
+            }
+            else
+            {
+                // 并排模式 - 只使用第一个URL
+                StartStreamingSideBySide(leftUrl);
+            }
+        }
+
+        /// <summary>
+        /// 开始播放视频流 - 并排模式
+        /// </summary>
+        /// <param name="url">并排视频流URL</param>
+        public void StartStreamingSideBySide(string url)
+        {
+            if (isStreaming)
+            {
+                Debug.LogWarning("[StereoVideoStreamManager] 视频流已在运行中，先停止当前流");
+                StopStreaming();
+            }
+
+            if (string.IsNullOrEmpty(url))
             {
                 Debug.LogError("[StereoVideoStreamManager] URL不能为空");
                 return;
@@ -244,14 +332,20 @@ namespace VideoStream
                 return;
             }
 
-            currentLeftUrl = leftUrl;
-            currentRightUrl = rightUrl;
+            currentLeftUrl = url; // 保存URL用于显示
 
-            Debug.Log($"[StereoVideoStreamManager] 启动视频流\nLeft: {leftUrl}\nRight: {rightUrl}");
+            Debug.Log($"[StereoVideoStreamManager] 启动并排模式 (Side-by-Side)\nURL: {url}");
 
             // 重置连接状态
-            leftStreamConnected = false;
-            rightStreamConnected = false;
+            sideBySideStreamConnected = false;
+
+            // 初始化side-by-side临时纹理
+            if (sideBySideTexture == null)
+            {
+                sideBySideTexture = new Texture2D(2, 2, textureFormat, false);
+                sideBySideTexture.filterMode = textureFilterMode;
+                sideBySideTexture.wrapMode = TextureWrapMode.Clamp;
+            }
 
             // 创建沉浸式显示
             CreateImmersiveDisplay();
@@ -262,17 +356,16 @@ namespace VideoStream
             statsTimer = 0f;
             currentFPS = 0f;
 
-            // 启动双目流
+            // 启动单流
             isStreaming = true;
-            
+
             // 如果启用了后台线程解码，则启动解码线程
             if (useBackgroundThreadForDecoding)
             {
                 StartDecodingThread();
             }
-            
-            leftStreamCoroutine = StartCoroutine(StreamEye(leftUrl, true));
-            rightStreamCoroutine = StartCoroutine(StreamEye(rightUrl, false));
+
+            sideBySideStreamCoroutine = StartCoroutine(StreamSideBySide(url));
         }
 
         /// <summary>
@@ -305,6 +398,12 @@ namespace VideoStream
                 rightStreamCoroutine = null;
             }
 
+            if (sideBySideStreamCoroutine != null)
+            {
+                StopCoroutine(sideBySideStreamCoroutine);
+                sideBySideStreamCoroutine = null;
+            }
+
             // 中断网络请求
             if (leftRequest != null)
             {
@@ -318,6 +417,13 @@ namespace VideoStream
                 rightRequest.Abort();
                 rightRequest.Dispose();
                 rightRequest = null;
+            }
+
+            if (sideBySideRequest != null)
+            {
+                sideBySideRequest.Abort();
+                sideBySideRequest.Dispose();
+                sideBySideRequest = null;
             }
 
             // 销毁显示对象
@@ -528,7 +634,109 @@ namespace VideoStream
         }
 
         /// <summary>
-        /// 当接收到新帧时的回调
+        /// 流式下载 side-by-side 视频
+        /// </summary>
+        /// <param name="url">并排视频流URL</param>
+        private IEnumerator StreamSideBySide(string url)
+        {
+            int retryCount = 0;
+
+            while (isStreaming && retryCount < maxRetryCount)
+            {
+                if (enableDebugLog)
+                {
+                    Debug.Log($"[StereoVideoStreamManager] 连接 Side-by-Side 视频流: {url}");
+                }
+
+                // 创建请求
+                UnityWebRequest request = new UnityWebRequest(url);
+                request.timeout = 0; // 禁用超时（持续流）
+
+                // 设置证书处理器
+                request.certificateHandler = new CustomCertificateHandler();
+
+                MjpegStreamHandler handler = new MjpegStreamHandler(enableDebugLog, targetFrameRate);
+
+                // 注册帧接收事件
+                handler.OnFrameReceived += (frameData) =>
+                {
+                    sideBySideStreamConnected = true;
+                    OnSideBySideFrameReceived(frameData);
+                };
+
+                // 注册错误事件
+                handler.OnError += (error) =>
+                {
+                    Debug.LogError($"[StereoVideoStreamManager] Side-by-Side 流处理错误: {error}");
+                };
+
+                request.downloadHandler = handler;
+
+                // 保存请求引用
+                sideBySideRequest = request;
+
+                // 发送请求
+                yield return request.SendWebRequest();
+
+                // 检查结果
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    Debug.Log("[StereoVideoStreamManager] Side-by-Side 流正常结束");
+                    retryCount = 0;
+                }
+                else
+                {
+                    string errorMessage = request.error;
+                    string detailedError = GetDetailedErrorMessage(request);
+
+                    bool isRealError = true;
+                    if (request.result == UnityWebRequest.Result.ConnectionError &&
+                        errorMessage.Contains("Request timeout"))
+                    {
+                        if (sideBySideStreamConnected)
+                        {
+                            Debug.Log("[StereoVideoStreamManager] Side-by-Side 流连接稳定，忽略超时错误");
+                            isRealError = false;
+                        }
+                    }
+
+                    if (isRealError)
+                    {
+                        Debug.LogWarning($"[StereoVideoStreamManager] Side-by-Side 流连接失败: {errorMessage}\n详细信息: {detailedError}");
+                        retryCount++;
+
+                        if (retryCount < maxRetryCount)
+                        {
+                            Debug.Log($"[StereoVideoStreamManager] 将在 {retryDelay} 秒后重试 ({retryCount}/{maxRetryCount})");
+                            yield return new WaitForSeconds(retryDelay);
+                        }
+                        else
+                        {
+                            Debug.LogError($"[StereoVideoStreamManager] Side-by-Side 流达到最大重试次数，放弃连接");
+                        }
+                    }
+                    else
+                    {
+                        retryCount = 0;
+                        yield return new WaitForSeconds(1f);
+                    }
+                }
+
+                // 清理请求
+                request.Dispose();
+                sideBySideRequest = null;
+
+                if (!isStreaming)
+                {
+                    break;
+                }
+            }
+
+            Debug.Log("[StereoVideoStreamManager] Side-by-Side 流协程结束");
+        }
+
+        /// <summary>
+        /// 当接收到新帧时的回调（双流模式）
         /// </summary>
         /// <param name="frameData">帧数据</param>
         /// <param name="isLeftEye">是否为左眼</param>
@@ -558,6 +766,25 @@ namespace VideoStream
             }
         }
 
+        /// <summary>
+        /// 当接收到 side-by-side 帧时的回调
+        /// </summary>
+        /// <param name="frameData">完整的并排帧数据</param>
+        private void OnSideBySideFrameReceived(byte[] frameData)
+        {
+            lock (frameLock)
+            {
+                sideBySideFrameBuffer = frameData;
+                sideBySideFrameReady = true;
+
+                if (enableDebugLog && totalReceivedFrames % 30 == 0)
+                {
+                    Debug.Log($"[StereoVideoStreamManager] OnSideBySideFrameReceived: 收到第{totalReceivedFrames}帧");
+                }
+                totalReceivedFrames++;
+            }
+        }
+
         #endregion
 
         #region 纹理更新
@@ -565,6 +792,7 @@ namespace VideoStream
         /// <summary>
         /// 更新纹理（必须在主线程调用）
         /// 优化：支持交替更新模式，避免单帧双重解码阻塞
+        /// 支持 side-by-side 模式的纹理切分
         /// </summary>
         private void UpdateTextures()
         {
@@ -588,7 +816,74 @@ namespace VideoStream
             {
                 bool updated = false;
 
-                if (alternateEyeUpdate)
+                // Side-by-Side 模式处理
+                if (streamMode == MjpegStreamMode.SideBySide && sideBySideFrameReady && sideBySideFrameBuffer != null)
+                {
+                    try
+                    {
+                        // 加载完整的 side-by-side 图像到临时纹理
+                        sideBySideTexture.LoadImage(sideBySideFrameBuffer);
+                        sideBySideFrameReady = false;
+
+                        // 获取完整图像的尺寸
+                        int fullWidth = sideBySideTexture.width;
+                        int fullHeight = sideBySideTexture.height;
+                        int halfWidth = fullWidth / 2;
+
+                        if (enableDebugLog && leftFrameCount % 30 == 0)
+                        {
+                            Debug.Log($"[StereoVideoStreamManager] Side-by-Side 图像尺寸: {fullWidth}x{fullHeight}，切分为 {halfWidth}x{fullHeight}");
+                        }
+
+                        // 获取完整图像的像素数据
+                        Color[] pixels = sideBySideTexture.GetPixels();
+
+                        // 创建左右眼的像素数组
+                        Color[] leftPixels = new Color[halfWidth * fullHeight];
+                        Color[] rightPixels = new Color[halfWidth * fullHeight];
+
+                        // 切分图像：左半部分到左眼，右半部分到右眼
+                        for (int y = 0; y < fullHeight; y++)
+                        {
+                            for (int x = 0; x < halfWidth; x++)
+                            {
+                                // 左半部分
+                                leftPixels[y * halfWidth + x] = pixels[y * fullWidth + x];
+                                // 右半部分
+                                rightPixels[y * halfWidth + x] = pixels[y * fullWidth + (x + halfWidth)];
+                            }
+                        }
+
+                        // 调整左右眼纹理尺寸（如果需要）
+                        if (leftEyeTexture.width != halfWidth || leftEyeTexture.height != fullHeight)
+                        {
+                            leftEyeTexture.Reinitialize(halfWidth, fullHeight);
+                            rightEyeTexture.Reinitialize(halfWidth, fullHeight);
+                        }
+
+                        // 应用像素到左右眼纹理
+                        leftEyeTexture.SetPixels(leftPixels);
+                        leftEyeTexture.Apply();
+
+                        rightEyeTexture.SetPixels(rightPixels);
+                        rightEyeTexture.Apply();
+
+                        leftFrameCount++;
+                        rightFrameCount++;
+
+                        if (enableDebugLog && leftFrameCount % 30 == 0)
+                        {
+                            Debug.Log($"[StereoVideoStreamManager] Side-by-Side 第{leftFrameCount}帧切分完成");
+                        }
+
+                        updated = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[StereoVideoStreamManager] Side-by-Side 纹理切分失败: {ex.Message}");
+                    }
+                }
+                else if (streamMode == MjpegStreamMode.DualStream && alternateEyeUpdate)
                 {
                     // 【推荐模式】交替更新左右眼，避免单帧解码2次JPEG
                     // 这样每帧只有一次 LoadImage() 调用，将主线程阻塞时间减半
@@ -644,7 +939,7 @@ namespace VideoStream
                     // 切换下一帧要更新的眼睛
                     updateLeftEyeThisFrame = !updateLeftEyeThisFrame;
                 }
-                else
+                else if (streamMode == MjpegStreamMode.DualStream)
                 {
                     // 【传统模式】同时更新双眼（可能导致卡顿）
                     // 更新左眼纹理
